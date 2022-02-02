@@ -160,21 +160,65 @@ static void dcr_dcrarb_register(CPUPPCState *env, uint32_t base)
     }
 }
 
-static uint32_t ddr_graif_dcr_read (void *opaque, int dcrn)
+static uint32_t ddr_mcif2arb_dcr_read (void *opaque, int dcrn)
 {
     return 0;
 }
 
-static void ddr_graif_dcr_write (void *opaque, int dcrn, uint32_t val)
+static void ddr_mcif2arb_dcr_write (void *opaque, int dcrn, uint32_t val)
 {
 }
 
-static void dcr_ddr_graif_register(CPUPPCState *env, uint32_t base)
+static void dcr_ddr_mcif2arb_register(CPUPPCState *env, uint32_t base)
 {
     uint32_t i;
 
     for (i = 0x0; i <= 0xfb; i++) {
-        ppc_dcr_register(env, base + i, NULL, ddr_graif_dcr_read, ddr_graif_dcr_write);
+        ppc_dcr_register(env, base + i, NULL, ddr_mcif2arb_dcr_read, ddr_mcif2arb_dcr_write);
+    }
+}
+
+static uint32_t ddr_ddr3lmc_dcr_read (void *opaque, int dcrn)
+{
+    uint32_t *regs = opaque;
+
+    return regs[dcrn & 0xff];
+}
+
+static void ddr_ddr3lmc_dcr_write (void *opaque, int dcrn, uint32_t val)
+{
+    uint32_t *regs = opaque;
+
+    if ((dcrn & 0xff) == 0x21) {
+        if ((val & 0x80000000) == 0) {
+            regs[0x10] &= ~0x40000000;
+        } else {
+            regs[0x10] |= 0x40000000;
+            val &= ~0x10000000;
+        }
+
+        if (val & 0x20000000) {
+            val &= ~0x20000000;
+            regs[0x10] |= 0x80000000;
+        }
+    }
+    
+    regs[dcrn & 0xff] = val;
+}
+
+static void dcr_ddr_ddr3lmc_register(CPUPPCState *env, uint32_t base)
+{
+    uint32_t i;
+
+    uint32_t *regs = g_new0(uint32_t, 0xfb);
+
+    // reset
+    regs[0x10] = 0x60000000;
+    regs[0x20] = 0x01020000;
+    regs[0x21] = 0x80F30000;
+
+    for (i = 0x0; i <= 0xfb; i++) {
+        ppc_dcr_register(env, base + i, regs, ddr_ddr3lmc_dcr_read, ddr_ddr3lmc_dcr_write);
     }
 }
 
@@ -286,14 +330,14 @@ static void mm7705_init(MachineState *machine)
     dcr_ddr_plb6mcif2_register(env, 0x80010000);
     dcr_ddr_aximcif2_register(env, 0x80020000);
     dcr_ddr_mclfir_register(env, 0x80030000);
-    dcr_ddr_graif_register(env, 0x80040000);
-    dcr_ddr_graif_register(env, 0x80050000);
+    dcr_ddr_mcif2arb_register(env, 0x80040000);
+    dcr_ddr_ddr3lmc_register(env, 0x80050000);
 
     dcr_ddr_plb6mcif2_register(env, 0x80100000);
     dcr_ddr_aximcif2_register(env, 0x80110000);
     dcr_ddr_mclfir_register(env, 0x80120000);
-    dcr_ddr_graif_register(env, 0x80130000);
-    dcr_ddr_graif_register(env, 0x80140000);
+    dcr_ddr_mcif2arb_register(env, 0x80130000);
+    dcr_ddr_ddr3lmc_register(env, 0x80140000);
 
     dcr_ddr_plb6mcif2_register(env, 0x80160000);
     dcr_ddr_plb6mcif2_register(env, 0x80180000);
