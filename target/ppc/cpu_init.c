@@ -9531,6 +9531,44 @@ void ppc_cpu_dump_state(CPUState *cs, FILE *f, int flags)
     }
 #endif
 
+    qemu_fprintf(f, "\n--- SPR's ---\n");
+
+    int k = 0;
+    while (k < 1024) {
+        int i = k;
+        int count = 0;
+
+        while (count != 4 && i < 1024) {
+            if (env->spr_cb[i].name) {
+                qemu_fprintf(f, " [%4u] %8s", i, env->spr_cb[i].name);
+
+                count++;
+            }
+
+            i++;
+        }
+
+        qemu_fprintf(f, "\n");
+
+        if (i == 1024 && count == 0) {
+            break;
+        }
+
+        i = k;
+        while (count) {
+            if (env->spr_cb[i].name) {
+                qemu_fprintf(f, "        " TARGET_FMT_lx, env->spr[i]);
+                count--;
+            }
+
+            i++;
+        }
+
+        qemu_fprintf(f, "\n");
+
+        k = i;
+    }
+
 #undef RGPL
 #undef RFPL
 }
