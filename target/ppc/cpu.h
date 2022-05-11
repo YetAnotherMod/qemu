@@ -1031,6 +1031,11 @@ struct ppc_radix_page_info {
 /* PowerPC 476 little-endian bit position */
 #define PPC476_TLB_LE               0x80
 
+/* PowerPC 476 specific defines */
+#define PPC476_SPCR_ORDER_MASK          0xf
+#define PPC476_SPCR_FIRST_ORDER_OFFSET  28
+#define PPC476_SPCR_ORDER_SIZE          4
+
 /*****************************************************************************/
 /* The whole PowerPC CPU context */
 
@@ -1373,9 +1378,9 @@ int ppcemb_tlb_check(CPUPPCState *env, ppcemb_tlb_t *tlb,
                             int i);
 hwaddr booke206_tlb_to_page_size(CPUPPCState *env,
                                         ppcmas_tlb_t *tlb);
-int ppc476fp_tlb_check(CPUPPCState *env, ppcemb_tlb_t *tlb,
-                            hwaddr *raddrp,
-                            target_ulong address, uint32_t pid, int i);
+int ppc476fp_tlb_check(CPUPPCState *env, ppcemb_tlb_t *tlb, hwaddr *raddrp,
+                       target_ulong address, target_ulong size, uint32_t pid);
+uint32_t mmu476fp_spcr_to_size(uint32_t order);
 #endif
 #endif
 

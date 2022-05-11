@@ -706,9 +706,8 @@ static int mmubooke_get_physical_address(CPUPPCState *env, mmu_ctx_t *ctx,
     return ret;
 }
 
-int ppc476fp_tlb_check(CPUPPCState *env, ppcemb_tlb_t *tlb,
-                            hwaddr *raddrp,
-                            target_ulong address, uint32_t pid, int i)
+int ppc476fp_tlb_check(CPUPPCState *env, ppcemb_tlb_t *tlb, hwaddr *raddrp,
+                       target_ulong address, target_ulong size, uint32_t pid)
 {
     uint64_t mask;
 
@@ -716,18 +715,28 @@ int ppc476fp_tlb_check(CPUPPCState *env, ppcemb_tlb_t *tlb,
     if (!(tlb->prot & PAGE_VALID)) {
         return -1;
     }
-    mask = ~((uint64_t)tlb->size - 1);
-    LOG_SWTLB("%s: TLB %d address " TARGET_FMT_lx " PID %u <=> " TARGET_FMT_lx
-              " " TARGET_FMT_lx " %u %x\n", __func__, i, address, pid, tlb->EPN,
+
+    LOG_SWTLB("%s: TLB address " TARGET_FMT_lx " PID %u <=> " TARGET_FMT_lx
+              " " TARGET_FMT_lx " %u %x\n", __func__, address, pid, tlb->EPN,
               mask, (uint32_t)tlb->PID, tlb->prot);
+
     /* Check PID */
-    if (tlb->PID != 0 && tlb->PID != pid) {
+    if (tlb->PID != pid) {
         return -1;
     }
+
+    /* Check size */
+    if (size != -1 && tlb->size != size) {
+        return -1;
+    }
+
+    mask = ~((uint64_t)tlb->size - 1);
+
     /* Check effective address */
     if ((address & mask) != tlb->EPN) {
         return -1;
     }
+
     *raddrp = address & ~mask;
     *raddrp |= tlb->RPN;
 
@@ -736,12 +745,11 @@ int ppc476fp_tlb_check(CPUPPCState *env, ppcemb_tlb_t *tlb,
 
 static int mmu476fp_check_tlb(CPUPPCState *env, ppcemb_tlb_t *tlb,
                               hwaddr *raddr, int *prot, target_ulong address,
-                              MMUAccessType access_type, int i)
+                              target_ulong size, uint32_t pid, MMUAccessType access_type)
 {
     int prot2;
 
-    if (!(ppc476fp_tlb_check(env, tlb, raddr, address,
-                         env->spr[SPR_BOOKE_PID], i) >= 0)) {
+    if (!(ppc476fp_tlb_check(env, tlb, raddr, address, size, pid) >= 0)) {
         LOG_SWTLB("%s: TLB entry not found\n", __func__);
         return -1;
     }
@@ -759,7 +767,7 @@ static int mmu476fp_check_tlb(CPUPPCState *env, ppcemb_tlb_t *tlb,
 
     /* Check the address space */
     if ((access_type == MMU_INST_FETCH ? msr_ir : msr_dr) != (tlb->attr & 1)) {
-        LOG_SWTLB("%s: AS doesn't match\n", __func__);
+        LOG_SWTLB("%s: AS (TS bit) doesn't match\n", __func__);
         return -1;
     }
 
@@ -773,68 +781,174 @@ static int mmu476fp_check_tlb(CPUPPCState *env, ppcemb_tlb_t *tlb,
     return access_type == MMU_INST_FETCH ? -3 : -2;
 }
 
-static int mmu476fp_get_physical_address(CPUPPCState *env, mmu_ctx_t *ctx,
-                                         target_ulong address,
-                                         MMUAccessType access_type)
+static int mmu476fp_search_shadow_tlb(CPUPPCState *env,
+                                      target_ulong address, target_ulong size,
+                                      uint32_t pid, hwaddr *raddr, int *prot,
+                                      MMUAccessType access_type)
 {
-    ppcemb_tlb_t *tlb;
-    hwaddr raddr;
     int i, ret;
 
     ret = -1;
-    raddr = (hwaddr)-1ULL;
+    *raddr = (hwaddr)-1ULL;
 
     /* Firstly search in corresponded shadow TLB */
-    bool found_in_shadow_tlb = 0;
     ppcemb_tlb_t *shadow_tlb =
         access_type == MMU_INST_FETCH ? env->i_shadow_tlb : env->d_shadow_tlb;
     int *shadow_tlb_size =
         access_type == MMU_INST_FETCH ? &env->curr_i_shadow_tlb : &env->curr_d_shadow_tlb;
+    // int *shadow_tlb_last =
+    //     access_type == MMU_INST_FETCH ? &env->last_i_shadow_tlb : &env->last_d_shadow_tlb;
 
     for (i = 0; i < *shadow_tlb_size; i++) {
-        ret = mmu476fp_check_tlb(env, shadow_tlb + i, &raddr, &ctx->prot, address,
-                                 access_type, i);
+        // int index = (*shadow_tlb_last - 1 - i) % 8;
+
+        // ret = mmu476fp_check_tlb(env, shadow_tlb + index, raddr, prot, address, size, pid,
+        ret = mmu476fp_check_tlb(env, shadow_tlb + i, raddr, prot, address, size, pid,
+                                 access_type);
         if (ret != -1) {
-            found_in_shadow_tlb = 1;
             break;
         }
     }
 
-    /* Search in main TLB if not found in shadow TLB */
-    if (!found_in_shadow_tlb) {
-        for (i = 0; i < env->nb_tlb; i++) {
-            tlb = &env->tlb.tlbe[i];
-            ret = mmu476fp_check_tlb(env, tlb, &raddr, &ctx->prot, address,
-                                     access_type, i);
-            if (ret != -1) {
-                break;
-            }
+    if (ret >= 0) {
+        LOG_SWTLB("%s: access granted " TARGET_FMT_lx " => " TARGET_FMT_plx
+                  " %d %d\n", __func__, address, *raddr, *prot, ret);
+    } else {
+        LOG_SWTLB("%s: access refused " TARGET_FMT_lx " => " TARGET_FMT_plx
+                  " %d %d\n", __func__, address, *raddr, *prot, ret);
+    }
+
+    return ret;
+}
+
+static void mmu476fp_modify_shadow_tlb(CPUPPCState *env, ppcemb_tlb_t *tlb,
+                                       MMUAccessType access_type)
+{
+    ppcemb_tlb_t *shadow_tlb =
+        access_type == MMU_INST_FETCH ? env->i_shadow_tlb : env->d_shadow_tlb;
+
+    int *shadow_tlb_size =
+        access_type == MMU_INST_FETCH ? &env->curr_i_shadow_tlb : &env->curr_d_shadow_tlb;
+
+    /* Modify shadow tlb if found entry in main TLB */
+    int *shadow_tlb_last = access_type == MMU_INST_FETCH ?
+        &env->last_i_shadow_tlb : &env->last_d_shadow_tlb;
+
+    memcpy(&shadow_tlb[*shadow_tlb_last], tlb, sizeof(ppcemb_tlb_t));
+    *shadow_tlb_last = (*shadow_tlb_last + 1) % 8;
+
+    if (*shadow_tlb_size < 8) {
+        (*shadow_tlb_size)++;
+    }
+}
+
+static int mmu476fp_search_main_tlb(CPUPPCState *env,
+                                    target_ulong address, target_ulong size,
+                                    uint32_t pid, hwaddr *raddr, int *prot,
+                                    MMUAccessType access_type)
+{
+    ppcemb_tlb_t *tlb;
+    int i, ret;
+
+    ret = -1;
+    *raddr = (hwaddr)-1ULL;
+
+    /* Search in main TLB */
+    for (i = 0; i < env->nb_tlb; i++) {
+        tlb = &env->tlb.tlbe[i];
+        ret = mmu476fp_check_tlb(env, tlb, raddr, prot, address, size, pid,
+                                 access_type);
+        if (ret != -1) {
+            break;
         }
     }
 
     if (ret >= 0) {
-        /* Modify shadow tlb if found entry in main TLB */
-        if (!found_in_shadow_tlb) {
-            int *shadow_tlb_last =
-                access_type == MMU_INST_FETCH ?
-                &env->last_i_shadow_tlb :
-                &env->last_d_shadow_tlb;
+        // если нашли в мэйн, значит заносим в шэдоу
+        mmu476fp_modify_shadow_tlb(env, tlb, access_type);
 
-            memcpy(&shadow_tlb[*shadow_tlb_last], tlb, sizeof(ppcemb_tlb_t));
-            *shadow_tlb_last = (*shadow_tlb_last + 1) % 8;
+        LOG_SWTLB("%s: access granted " TARGET_FMT_lx " => " TARGET_FMT_plx
+                  " %d %d\n", __func__, address, *raddr, *prot, ret);
+    } else {
+        LOG_SWTLB("%s: access refused " TARGET_FMT_lx " => " TARGET_FMT_plx
+                  " %d %d\n", __func__, address, *raddr, *prot, ret);
+    }
 
-            if (*shadow_tlb_size < 8) {
-                (*shadow_tlb_size)++;
+    return ret;
+}
+
+#define PPC476_SPCR_SIZE_MASK           0x7
+#define PPC476_SPCR_PID0_CHECK          0x8
+
+#define PPC476_PID_MASK                 0xffff
+
+uint32_t mmu476fp_spcr_to_size(uint32_t order)
+{
+    switch (order & PPC476_SPCR_SIZE_MASK) {
+    default:
+    case 0x1: return   4 * KiB;
+    case 0x2: return  16 * KiB;
+    case 0x3: return  64 * KiB;
+    case 0x4: return   1 * MiB;
+    case 0x5: return  16 * MiB;
+    case 0x6: return 256 * MiB;
+    case 0x7: return   1 * GiB;
+    }
+}
+
+static int mmu476fp_get_physical_address(CPUPPCState *env, mmu_ctx_t *ctx,
+                                         target_ulong address,
+                                         MMUAccessType access_type)
+{
+    uint32_t i;
+    uint32_t spcr;
+    int ret = -1;
+
+    // если в шэдоу нашли, значит ок
+    ret = mmu476fp_search_shadow_tlb(env, address, -1,
+        env->spr[SPR_BOOKE_PID] & PPC476_PID_MASK, &ctx->raddr, &ctx->prot, access_type);
+
+    if (!ret) {
+        return ret;
+    }
+
+    // select corresponding SPCR
+    if (msr_pr == 0) {
+        spcr = env->spr[SPR_SSPCR];
+    } else {
+        spcr = env->spr[SPR_USPCR];
+    }
+
+    for (i = PPC476_SPCR_FIRST_ORDER_OFFSET; i != 0; i -= PPC476_SPCR_ORDER_SIZE) {
+        uint32_t order = (spcr >> i) & PPC476_SPCR_ORDER_MASK;
+        uint32_t size = mmu476fp_spcr_to_size(order);
+
+        // stop the search when order equals to 0
+        // or continue but only (!) for first order: 0 equals to 4K page
+        if (!order && i != PPC476_SPCR_FIRST_ORDER_OFFSET) {
+            break;
+        }
+
+        if (order & PPC476_SPCR_PID0_CHECK) {
+            // check for PID = 0 as first search
+            ret = mmu476fp_search_main_tlb(env, address, size, 0,
+                &ctx->raddr, &ctx->prot, access_type);
+
+            // stop if we found an entry
+            if (!ret) {
+                break;
             }
         }
 
-        ctx->raddr = raddr;
-        LOG_SWTLB("%s: access granted " TARGET_FMT_lx " => " TARGET_FMT_plx
-                  " %d %d\n", __func__, address, ctx->raddr, ctx->prot,
-                  ret);
-    } else {
-        LOG_SWTLB("%s: access refused " TARGET_FMT_lx " => " TARGET_FMT_plx
-                  " %d %d\n", __func__, address, raddr, ctx->prot, ret);
+        ret = mmu476fp_search_main_tlb(env, address, size,
+            env->spr[SPR_BOOKE_PID] & PPC476_PID_MASK, &ctx->raddr, &ctx->prot,
+            access_type);
+
+        // stop if we found an entry
+        // special check if order equals to 0 (this only happens for first order)
+        if (!ret || !order) {
+            break;
+        }
     }
 
     return ret;

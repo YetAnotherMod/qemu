@@ -1020,14 +1020,32 @@ static int ppc476_tlb_search(CPUPPCState *env, target_ulong address,
 {
     ppcemb_tlb_t *tlb;
     hwaddr raddr;
-    int i, ret;
+    int i, j, ret;
 
     /* Default return value is no match */
     ret = -1;
-    for (i = 0; i < env->nb_tlb; i++) {
-        tlb = &env->tlb.tlbe[i];
-        if (ppc476fp_tlb_check(env, tlb, &raddr, address, pid, i) == 0) {
-            ret = i;
+
+    for (i = PPC476_SPCR_FIRST_ORDER_OFFSET; i != 0; i -= PPC476_SPCR_ORDER_SIZE) {
+        uint32_t order = (env->spr[SPR_ISPCR] >> i) & PPC476_SPCR_ORDER_MASK;
+        uint32_t size = mmu476fp_spcr_to_size(order);
+
+        // stop the search when order equals to 0
+        // or continue but only (!) for first order: 0 equals to 4K page
+        if (!order && i != PPC476_SPCR_FIRST_ORDER_OFFSET) {
+            break;
+        }
+
+        for (j = 0; j < env->nb_tlb; j++) {
+            tlb = &env->tlb.tlbe[j];
+            if (ppc476fp_tlb_check(env, tlb, &raddr, address, size, pid) == 0) {
+                ret = j;
+                break;
+            }
+        }
+
+        // stop if we found an entry
+        // special check if order equals to 0 (this only happens for first order)
+        if (ret != -1 || !order) {
             break;
         }
     }
