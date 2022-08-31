@@ -984,7 +984,6 @@ target_ulong helper_440_tlbsx(CPUPPCState *env, target_ulong address)
 // translation space bit
 #define PPC476_TLB_TS_BIT               0x400
 #define PPC476_TLB_VALID_BIT            0x800
-#define PPC476_TLB_EPN_SHIFT            12
 #define PPC476_TLB_BOLTED_INDEX_MASK    0x7000000
 #define PPC476_TLB_BOLTED_INDEX_SHIFT   24
 #define PPC476_TLB_BOLTED_ENTRY         0x8000000
@@ -1085,18 +1084,74 @@ static void remove_476_bolted_entry(CPUPPCState *env, uint32_t index)
 /* Exclusive OR (XOR) based hash function is used when an entry is searched
  *
  * Entry bits values are calculated by using tid bits and address bits
+ * For each page size are used different address bits
  *
  * | entry bits    | 7| 6| 5| 4| 3| 2| 1| 0|
  * |---------------|--|--|--|--|--|--|--|--|
  * | tid bits      | 7| 6| 5| 4| 3| 2| 1| 0|
  * |---------------|--|--|--|--|--|--|--|--|
- * | address bits  |19|18|17|16|15|14|13|12|
- * |               |11|10| 9| 8|  |  |  |  |
- * |               | 7| 6| 5| 4| 3| 2| 1| 0|
+ *               4 KB page size
+ * |---------------|--|--|--|--|--|--|--|--|     | mask | offset |
+ * | address bits  |19|18|17|16|15|14|13|12| <-> | 0xff |   12   |
+ * |               |23|22|21|20|  |  |  |  | <-> | 0xf0 |   16   |
+ * |               |31|30|29|28|27|26|25|24| <-> | 0xff |   24   |
+ *               16 KB page size
+ * |---------------|--|--|--|--|--|--|--|--|     | mask | offset |
+ * | address bits  |21|20|19|18|17|16|15|14| <-> | 0xff |   14   |
+ * |               |23|22|  |  |  |  |  |  | <-> | 0xc0 |   16   |
+ * |               |31|30|29|28|27|26|25|24| <-> | 0xff |   24   |
+ *               64 KB page size
+ * |---------------|--|--|--|--|--|--|--|--|     | mask | offset |
+ * | address bits  |23|22|21|20|19|18|17|16| <-> | 0xff |   16   |
+ * |               |31|30|29|28|27|26|25|24| <-> | 0xff |   24   |
+ *               1 MB page size
+ * |---------------|--|--|--|--|--|--|--|--|     | mask | offset |
+ * | address bits  |27|26|25|24|23|22|21|20| <-> | 0xff |   20   |
+ * |               |31|30|29|28|  |  |  |  | <-> | 0xf0 |   24   |
+ *               16 MB page size
+ * |---------------|--|--|--|--|--|--|--|--|     | mask | offset |
+ * | address bits  |31|30|29|28|27|26|25|24| <-> | 0xff |   24   |
+ *               256 MB page size
+ * |---------------|--|--|--|--|--|--|--|--|     | mask | offset |
+ * | address bits  |31|30|29|28|  |  |  |  | <-> | 0xf0 |   24   |
+ *               1 GB page size
+ * |---------------|--|--|--|--|--|--|--|--|     | mask | offset |
+ * | address bits  |31|30|  |  |  |  |  |  | <-> | 0xc0 |   24   |
  */
-static inline uint8_t calc_476_tlb_entry_index(target_ulong addr, uint32_t tid)
+static inline uint8_t calc_476_tlb_entry_index(target_ulong addr, uint32_t tid,
+                                               uint32_t size)
 {
-    return (tid & 0xff) ^ (addr & 0xff) ^ ((addr >> 4) & 0xf0) ^ ((addr >> 12) & 0xff);
+    static const struct {
+        struct {
+            uint32_t mask;
+            uint32_t offset;
+        } addr1, addr2, addr3;
+    } addr_bits[] = {
+        {{0xff, 24}, {0xff, 12}, {0xf0, 16},},  //   4 KB page size
+        {{0xff, 24}, {0xff, 14}, {0xc0, 16},},  //  16 KB page size
+        {{0xff, 24}, {0xff, 16}, {   0,  0},},  //  64 KB page size
+        {{0xf0, 24}, {0xff, 20}, {   0,  0},},  //   1 MB page size
+        {{0xff, 24}, {   0,  0}, {   0,  0},},  //  16 MB page size
+        {{0xf0, 24}, {   0,  0}, {   0,  0},},  // 256 MB page size
+        {{0xc0, 24}, {   0,  0}, {   0,  0},},  //   1 GB page size
+    };
+    int index;
+
+    switch (size) {
+    case   4 * KiB: index = 0; break;
+    case  16 * KiB: index = 1; break;
+    case  64 * KiB: index = 2; break;
+    case   1 * MiB: index = 3; break;
+    case  16 * MiB: index = 4; break;
+    case 256 * MiB: index = 5; break;
+    case   1 * GiB: index = 6; break;
+    default: assert(0); break;
+    }
+
+    return (tid & 0xff) ^
+           ((addr >> addr_bits[index].addr1.offset) & addr_bits[index].addr1.mask) ^
+           ((addr >> addr_bits[index].addr2.offset) & addr_bits[index].addr2.mask) ^
+           ((addr >> addr_bits[index].addr3.offset) & addr_bits[index].addr3.mask);
 }
 
 /* Linearise ppc tlb representation in qemu internal tlb array */
@@ -1123,7 +1178,7 @@ static uint32_t calc_476_tlb_to_page_size(uint32_t size)
     case 0x0f: return  16 * MiB;
     case 0x1f: return 256 * MiB;
     case 0x3f: return   1 * GiB;
-    default: return 0;
+    default: assert(0); break;
     }
 }
 
@@ -1137,7 +1192,7 @@ static uint32_t calc_476_page_size_to_tlb(uint32_t size)
     case  16 * MiB: return 0x0f;
     case 256 * MiB: return 0x1f;
     case   1 * GiB: return 0x3f;
-    default: return 0;
+    default: assert(0); break;
     }
 }
 
@@ -1164,7 +1219,7 @@ void helper_476_tlbwe(CPUPPCState *env, uint32_t word, target_ulong entry,
 
         tid = env->spr[SPR_440_MMUCR] & PPC476_MMUCR_STID_MASK;
 
-        index = calc_476_tlb_entry_index(addr >> PPC476_TLB_EPN_SHIFT, tid);
+        index = calc_476_tlb_entry_index(addr, tid, size);
 
         if (entry & PPC476_TLB_BOLTED_ENTRY) {
             way = 0;
