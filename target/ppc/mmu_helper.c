@@ -1185,6 +1185,7 @@ static uint32_t calc_476_tlb_to_page_size(uint32_t size)
 static uint32_t calc_476_page_size_to_tlb(uint32_t size)
 {
     switch (size) {
+    default: // empty TLB entry will have non-valid 4K page
     case   4 * KiB: return 0x00;
     case  16 * KiB: return 0x01;
     case  64 * KiB: return 0x03;
@@ -1192,7 +1193,6 @@ static uint32_t calc_476_page_size_to_tlb(uint32_t size)
     case  16 * MiB: return 0x0f;
     case 256 * MiB: return 0x1f;
     case   1 * GiB: return 0x3f;
-    default: assert(0); break;
     }
 }
 
