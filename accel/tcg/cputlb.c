@@ -1614,7 +1614,7 @@ static int probe_access_internal(CPUArchState *env, target_ulong addr,
     flags = tlb_addr & TLB_FLAGS_MASK;
 
     /* Fold all "mmio-like" bits into TLB_MMIO.  This is not RAM.  */
-    if (unlikely(flags & ~(TLB_WATCHPOINT | TLB_NOTDIRTY))) {
+    if (unlikely(flags & ~(TLB_WATCHPOINT | TLB_NOTDIRTY | TLB_BSWAP))) {
         *phost = NULL;
         return TLB_MMIO;
     }
