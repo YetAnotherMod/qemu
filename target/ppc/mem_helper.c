@@ -85,13 +85,25 @@ void helper_lmw(CPUPPCState *env, target_ulong addr, uint32_t reg)
 {
     uintptr_t raddr = GETPC();
     int mmu_idx = cpu_mmu_index(env, false);
-    void *host = probe_contiguous(env, addr, (32 - reg) * 4,
-                                  MMU_DATA_LOAD, mmu_idx, raddr);
+    void *host;
+    int flags;
+
+    flags = probe_access_flags(env, addr, MMU_DATA_LOAD, mmu_idx,
+                               true, &host, raddr);
+
+    assert(flags != TLB_INVALID_MASK);
+
+    host = probe_contiguous(env, addr, (32 - reg) * 4,
+                            MMU_DATA_LOAD, mmu_idx, raddr);
 
     if (likely(host)) {
         /* Fast path -- the entire operation is in RAM at host.  */
         for (; reg < 32; reg++) {
-            env->gpr[reg] = (uint32_t)ldl_be_p(host);
+            if (flags & TLB_BSWAP) {
+                env->gpr[reg] = (uint32_t)ldl_le_p(host);
+            } else {
+                env->gpr[reg] = (uint32_t)ldl_be_p(host);
+            }
             host += 4;
         }
     } else {
@@ -107,13 +119,25 @@ void helper_stmw(CPUPPCState *env, target_ulong addr, uint32_t reg)
 {
     uintptr_t raddr = GETPC();
     int mmu_idx = cpu_mmu_index(env, false);
-    void *host = probe_contiguous(env, addr, (32 - reg) * 4,
-                                  MMU_DATA_STORE, mmu_idx, raddr);
+    void *host;
+    int flags;
+
+    flags = probe_access_flags(env, addr, MMU_DATA_STORE, mmu_idx,
+                               true, &host, raddr);
+
+    assert(flags != TLB_INVALID_MASK);
+
+    host = probe_contiguous(env, addr, (32 - reg) * 4,
+                            MMU_DATA_STORE, mmu_idx, raddr);
 
     if (likely(host)) {
         /* Fast path -- the entire operation is in RAM at host.  */
         for (; reg < 32; reg++) {
-            stl_be_p(host, env->gpr[reg]);
+            if (flags & TLB_BSWAP) {
+                stl_le_p(host, env->gpr[reg]);
+            } else {
+                stl_be_p(host, env->gpr[reg]);
+            }
             host += 4;
         }
     } else {
