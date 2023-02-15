@@ -1985,6 +1985,10 @@ load_helper(CPUArchState *env, target_ulong addr, MemOpIdx oi,
         r2 = full_load(env, addr2, oi, retaddr);
         shift = (addr & (size - 1)) * 8;
 
+        if (tlb_addr & TLB_BSWAP) {
+            op ^= MO_BSWAP;
+        }
+
         if (memop_big_endian(op)) {
             /* Big-endian combine.  */
             res = (r1 << shift) | (r2 >> ((size * 8) - shift));
@@ -2387,6 +2391,9 @@ store_helper(CPUArchState *env, target_ulong addr, uint64_t val,
         && unlikely((addr & ~TARGET_PAGE_MASK) + size - 1
                      >= TARGET_PAGE_SIZE)) {
     do_unaligned_access:
+        if (tlb_addr & TLB_BSWAP) {
+            op ^= MO_BSWAP;
+        }
         store_helper_unaligned(env, addr, val, retaddr, size,
                                mmu_idx, memop_big_endian(op));
         return;
