@@ -3709,9 +3709,6 @@ POWERPC_FAMILY(476FP)(ObjectClass *oc, void *data)
         PPC_FLOAT_FSEL |
         PPC_FLOAT_STFIWX |
         PPC_FLOAT_EXT |
-        PPC_SPE |
-        PPC_SPE_SINGLE |
-        PPC_SPE_DOUBLE |
         PPC_MEM_TLBIA |
         PPC_MEM_TLBIE |
         PPC_MEM_TLBSYNC |
