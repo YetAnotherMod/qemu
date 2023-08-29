@@ -39,7 +39,7 @@ typedef struct {
     KeyasicSdState sdio;
 } MM7705MachineState;
 
-#define TYPE_MM7705_MACHINE MACHINE_TYPE_NAME("mm7705")
+#define TYPE_MM7705_MACHINE MACHINE_TYPE_NAME("mb115.01")
 #define MM7705_MACHINE(obj) \
     OBJECT_CHECK(MM7705MachineState, obj, TYPE_MM7705_MACHINE)
 
@@ -678,7 +678,9 @@ static void mm7705_class_init(ObjectClass *oc, void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
 
-    mc->desc = "MM7705 board";
+    mc->desc = "MB115.01 board";
+    mc->alias = "mm7705";
+
     mc->init = mm7705_init;
     mc->reset = mm7705_reset;
     mc->default_cpu_type = POWERPC_CPU_TYPE_NAME("476fp");

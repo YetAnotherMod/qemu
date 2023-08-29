@@ -14,13 +14,13 @@ The simple steps to build QEMU for PowePC are:
 
 ## Launching
 
-MM7705 board is available with PowerPC 476FP core. To start it you can use following command:
+MB115.01 board is available with PowerPC 476FP core. To start it you can use following command:
 
 ```bash
     sudo ./qemu-system-ppc \
-        -M mm7705 \
-        -bios pc-bios/module_mm7705_rumboot.bin \
-        -drive file=pc-bios/module_mm7705_u-boot.bin,if=mtd,format=raw \
+        -M mb115.01 \
+        -bios pc-bios/module_mb115_rumboot.bin \
+        -drive file=pc-bios/module_mb115_u-boot.bin,if=mtd,format=raw \
         -monitor tcp::2345,server,nowait \
         -serial tcp::3555,server,nodelay,nowait \
         -gdb tcp::1234,server,nowait \
