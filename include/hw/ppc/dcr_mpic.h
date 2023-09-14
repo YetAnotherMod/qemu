@@ -1,5 +1,5 @@
-#ifndef MM7705_MPIC_H
-#define MM7705_MPIC_H
+#ifndef DCR_MPIC_H
+#define DCR_MPIC_H
 
 #define MAX_CPU_SUPPORTED	4
 
@@ -57,7 +57,7 @@ typedef struct {
 	qemu_irq output_irq[OUTPUT_IRQ_NUM];
 } MpicState;
 
-#define TYPE_MPIC "mm7705"
+#define TYPE_MPIC "dcr-mpic"
 #define MPIC(obj) \
     OBJECT_CHECK(MpicState, obj, TYPE_MPIC)
 
