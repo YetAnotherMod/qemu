@@ -986,7 +986,6 @@ target_ulong helper_440_tlbsx(CPUPPCState *env, target_ulong address)
 #define PPC476_TLB_VALID_BIT            0x800
 #define PPC476_TLB_BOLTED_INDEX_MASK    0x7000000
 #define PPC476_TLB_BOLTED_INDEX_SHIFT   24
-#define PPC476_TLB_BOLTED_ENTRY         0x8000000
 #define PPC476_TLB_MANUAL_WAY_MASK      0x60000000
 #define PPC476_TLB_MANUAL_WAY_SHIFT     29
 #define PPC476_TLB_MANUAL_WAY_SEL       0x80000000
@@ -1261,8 +1260,8 @@ void helper_476_tlbwe(CPUPPCState *env, uint32_t word, target_ulong entry,
             // make it BOLTED if it should be
             tlb->attr = entry & PPC476_TLB_BOLTED_ENTRY;
             // update TS bit
-            tlb->attr &= ~0x1;
-            tlb->attr |= value & PPC476_TLB_TS_BIT ? 0x1 : 0;
+            tlb->attr &= ~PPC476_TLB_TS;
+            tlb->attr |= value & PPC476_TLB_TS_BIT ? PPC476_TLB_TS : 0;
         } else {
             // we just invalidated an entry so this way is free for next entry
             env->tlb_way_selection[index] = way;
@@ -1298,7 +1297,7 @@ void helper_476_tlbwe(CPUPPCState *env, uint32_t word, target_ulong entry,
 
         // make it bolted if it was
         tlb->attr = (value & PPC476_TLB_ACCESS_PARAMS) |
-            (tlb->attr & PPC476_TLB_BOLTED_ENTRY) | (tlb->attr & 0x1);
+            (tlb->attr & PPC476_TLB_BOLTED_ENTRY) | (tlb->attr & PPC476_TLB_TS);
 
         if (increment_hardware_way) {
             env->tlb_way_selection[index]++;

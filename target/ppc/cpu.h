@@ -1029,7 +1029,13 @@ struct ppc_radix_page_info {
 #define PAGE_LE  PAGE_TARGET_1
 
 /* PowerPC 476 little-endian bit position */
+#define PPC476_TLB_BOLTED_ENTRY     0x8000000
+#define PPC476_TLB_IL1I             0x20000
+#define PPC476_TLB_IL1D             0x10000
+#define PPC476_TLB_WIMG_OFFSET      8
+#define PPC476_TLB_WIMG             (0xf<<PPC476_TLB_WIMG_OFFSET)
 #define PPC476_TLB_LE               0x80
+#define PPC476_TLB_TS               0x1
 
 /*****************************************************************************/
 /* The whole PowerPC CPU context */
