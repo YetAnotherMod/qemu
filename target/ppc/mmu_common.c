@@ -1119,10 +1119,13 @@ static void mmu476fp_print_mmu_entries(ppcemb_tlb_t *entry, int size)
 {
     int i;
 
+    qemu_printf("Ind-W Effective  Physical      Size   PID TS Bolt SXWR UXWR LE"
+                " IL1I IL1D WIMG\n");
+
     for (i = 0; i < size; i++, entry++) {
         hwaddr ea, pa;
         uint64_t mask;
-        uint64_t size = (uint64_t)entry->size;
+        uint64_t page_size = (uint64_t)entry->size;
         char size_buf[20];
 
         /* Check valid flag */
@@ -1130,17 +1133,39 @@ static void mmu476fp_print_mmu_entries(ppcemb_tlb_t *entry, int size)
             continue;
         }
 
-        mask = ~(size - 1);
+        mask = ~(page_size - 1);
         ea = entry->EPN & mask;
         pa = entry->RPN;
-        if (size >= 1 * MiB) {
-            snprintf(size_buf, sizeof(size_buf), "%3" PRId64 "M", size / MiB);
+
+        if (page_size >= 1 * GiB) {
+            snprintf(size_buf, sizeof(size_buf), "%3" PRId64 "G", page_size / GiB);
+        } else if (page_size >= 1 * MiB) {
+            snprintf(size_buf, sizeof(size_buf), "%3" PRId64 "M", page_size / MiB);
         } else {
-            snprintf(size_buf, sizeof(size_buf), "%3" PRId64 "k", size / KiB);
+            snprintf(size_buf, sizeof(size_buf), "%3" PRId64 "k", page_size / KiB);
         }
-        qemu_printf("0x%016" PRIx64 " 0x%016" PRIx64 " %s %-5u %08x %08x\n",
-                    (uint64_t)ea, (uint64_t)pa, size_buf, (uint32_t)entry->PID,
-                    entry->prot, entry->attr);
+
+        uint32_t super_x = !!((entry->prot >> 4) & PAGE_EXEC);
+        uint32_t super_w = !!((entry->prot >> 4) & PAGE_WRITE);
+        uint32_t super_r = !!((entry->prot >> 4) & PAGE_READ);
+        uint32_t user_x = !!(entry->prot & PAGE_EXEC);
+        uint32_t user_w = !!(entry->prot & PAGE_WRITE);
+        uint32_t user_r = !!(entry->prot & PAGE_READ);
+
+        uint32_t translation_bit = !!(entry->attr & PPC476_TLB_TS);
+        uint32_t bolted_entry = !!(entry->attr & PPC476_TLB_BOLTED_ENTRY);
+        uint32_t little_endian = !!(entry->attr & PPC476_TLB_LE);
+
+        uint32_t IL1I = !!(entry->attr & PPC476_TLB_IL1I);
+        uint32_t IL1D = !!(entry->attr & PPC476_TLB_IL1D);
+        uint32_t WIMG = (entry->attr & PPC476_TLB_WIMG) >> PPC476_TLB_WIMG_OFFSET;
+
+        qemu_printf("%3u-%c 0x%08" PRIx32 " 0x%011" PRIx64 " %s %5u %2u %4u"
+                    "  %u%u%u  %u%u%u %2u %4u %4u %4u\n",
+                    i % 256, i / 256 + 'A', (uint32_t)ea, (uint64_t)pa,
+                    size_buf, (uint32_t)entry->PID, translation_bit, bolted_entry,
+                    super_x, super_w, super_r, user_x, user_w, user_r,
+                    little_endian, IL1I, IL1D, WIMG);
     }
 }
 
@@ -1152,21 +1177,12 @@ static void mmu476fp_dump_mmu(CPUPPCState *env)
     }
 
     qemu_printf("\nShadow ITLB:\n");
-    qemu_printf("Effective          Physical           Size PID   Prot     "
-                "Attr\n");
-
     mmu476fp_print_mmu_entries(env->i_shadow_tlb, env->curr_i_shadow_tlb);
 
     qemu_printf("\nShadow DTLB:\n");
-    qemu_printf("Effective          Physical           Size PID   Prot     "
-                "Attr\n");
-
     mmu476fp_print_mmu_entries(env->d_shadow_tlb, env->curr_d_shadow_tlb);
 
     qemu_printf("\nTLB:\n");
-    qemu_printf("Effective          Physical           Size PID   Prot     "
-                "Attr\n");
-
     mmu476fp_print_mmu_entries(&env->tlb.tlbe[0], env->nb_tlb);
 }
 
