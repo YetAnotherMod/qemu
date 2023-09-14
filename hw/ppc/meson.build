@@ -88,5 +88,6 @@ ppc_ss.add(when: 'CONFIG_VOF', if_true: files('vof.c'))
 ppc_ss.add(when: ['CONFIG_VOF', 'CONFIG_PSERIES'], if_true: files('spapr_vof.c'))
 
 ppc_ss.add(when: 'CONFIG_MM7705', if_true: files('mm7705.c', 'dcr_mpic.c'))
+ppc_ss.add(when: 'CONFIG_MT174', if_true: files('mt174.c', 'dcr_mpic.c'))
 
 hw_arch += {'ppc': ppc_ss}

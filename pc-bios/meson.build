@@ -85,6 +85,7 @@ blobs = files(
   'npcm7xx_bootrom.bin',
   'module_mb115_rumboot.bin',
   'module_mb115_u-boot.bin',
+  'module_mt174_rumboot.bin',
 )
 
 if get_option('install_blobs')
