@@ -1,0 +1,11 @@
+#ifndef NMC_CPU_PARAM_H
+#define NMC_CPU_PARAM_H
+
+#define TARGET_LONG_BITS 32
+
+#define TARGET_PAGE_BITS 8
+#define TARGET_PHYS_ADDR_SPACE_BITS 24
+#define TARGET_VIRT_ADDR_SPACE_BITS 24
+#define NB_MMU_MODES 2
+
+#endif
