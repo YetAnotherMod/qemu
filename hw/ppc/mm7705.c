@@ -615,7 +615,7 @@ static void mm7705_init(MachineState *machine)
 
 
     MemoryRegion *BOOT_ROM = g_new(MemoryRegion, 1);
-    memory_region_init_rom(BOOT_ROM, NULL, "BOOT_ROM", 0x40000, &error_fatal);
+    memory_region_init_alias(BOOT_ROM, NULL, "BOOT_ROM", BOOT_ROM_1, 0, 0x40000);
     memory_region_add_subregion(get_system_memory(), 0x3fffffc0000, BOOT_ROM);
 
     qemu_register_reset(cpu_reset_temp, s->cpu);
