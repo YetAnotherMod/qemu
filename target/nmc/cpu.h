@@ -26,6 +26,10 @@ typedef struct NMCCPU {
     CPUNMCState env;
 } NMCCPU;
 
+#define cpu_list nmc_cpu_list
+
+void nmc_cpu_list(void);
+
 static inline void cpu_get_tb_cpu_state(CPUNMCState *env, target_ulong *pc,
                                         target_ulong *cs_base, uint32_t *pflags)
 {

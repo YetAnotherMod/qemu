@@ -6,7 +6,8 @@ gen = [
 nmc_ss = ss.source_set()
 nmc_ss.add(gen)
 nmc_ss.add(files(
-  'translate.c'
+  'translate.c',
+  'cpu.c'
 ))
 
 target_arch += {'nmc': nmc_ss}
