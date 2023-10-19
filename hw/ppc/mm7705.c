@@ -340,9 +340,9 @@ static void mm7705_init(MachineState *machine)
     object_property_set_link(OBJECT(&s->mpic), "cpu-state", OBJECT(s->cpu), &error_fatal);
     qdev_realize(DEVICE(&s->mpic), NULL, &error_fatal);
     qdev_connect_gpio_out_named(DEVICE(&s->mpic), "non_crit_int", 0,
-                                ((qemu_irq *)env->irq_inputs)[PPC40x_INPUT_INT]);
+                                qdev_get_gpio_in(DEVICE(s->cpu), PPC40x_INPUT_INT));
     qdev_connect_gpio_out_named(DEVICE(&s->mpic), "crit_int", 0,
-                                ((qemu_irq *)env->irq_inputs)[PPC40x_INPUT_CINT]);
+                                qdev_get_gpio_in(DEVICE(s->cpu), PPC40x_INPUT_CINT));
 
 
     /* Board has separated AXI bus for all peripherial devices */

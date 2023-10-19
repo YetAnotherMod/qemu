@@ -47,6 +47,10 @@
 #include "spr_common.h"
 #include "power8-pmu.h"
 
+#ifndef CONFIG_USER_ONLY
+#include "hw/boards.h"
+#endif
+
 /* #define PPC_DEBUG_SPR */
 /* #define USE_APPLE_GDB */
 
@@ -2611,7 +2615,6 @@ POWERPC_FAMILY(476FP)(ObjectClass *oc, void *data)
         PPC_RFDI |
         PPC_DCR |
         PPC_DCRX |
-        PPC_DCRUX |
         PPC_MFTB;
 
     pcc->insns_flags2 = PPC2_476_TLB | PPC2_ISA205 | PPC2_FP_CVT_S64;
@@ -5970,7 +5973,7 @@ POWERPC_FAMILY(970)(ObjectClass *oc, void *data)
                        PPC_MEM_TLBIE | PPC_MEM_TLBSYNC |
                        PPC_64B | PPC_ALTIVEC |
                        PPC_SEGMENT_64B | PPC_SLBI;
-    pcc->insns_flags2 = PPC2_FP_CVT_S64;
+    pcc->insns_flags2 = PPC2_FP_CVT_S64 | PPC2_MEM_LWSYNC;
     pcc->msr_mask = (1ull << MSR_SF) |
                     (1ull << MSR_VR) |
                     (1ull << MSR_POW) |
@@ -6047,7 +6050,7 @@ POWERPC_FAMILY(POWER5P)(ObjectClass *oc, void *data)
                        PPC_64B |
                        PPC_POPCNTB |
                        PPC_SEGMENT_64B | PPC_SLBI;
-    pcc->insns_flags2 = PPC2_FP_CVT_S64;
+    pcc->insns_flags2 = PPC2_FP_CVT_S64 | PPC2_MEM_LWSYNC;
     pcc->msr_mask = (1ull << MSR_SF) |
                     (1ull << MSR_VR) |
                     (1ull << MSR_POW) |
@@ -6150,7 +6153,8 @@ static bool cpu_has_work_POWER7(CPUState *cs)
         }
         return false;
     } else {
-        return msr_ee && (cs->interrupt_request & CPU_INTERRUPT_HARD);
+        return FIELD_EX64(env->msr, MSR, EE) &&
+               (cs->interrupt_request & CPU_INTERRUPT_HARD);
     }
 }
 
@@ -6185,7 +6189,7 @@ POWERPC_FAMILY(POWER7)(ObjectClass *oc, void *data)
                         PPC2_PERM_ISA206 | PPC2_DIVE_ISA206 |
                         PPC2_ATOMIC_ISA206 | PPC2_FP_CVT_ISA206 |
                         PPC2_FP_TST_ISA206 | PPC2_FP_CVT_S64 |
-                        PPC2_PM_ISA206;
+                        PPC2_PM_ISA206 | PPC2_MEM_LWSYNC | PPC2_BCDA_ISA206;
     pcc->msr_mask = (1ull << MSR_SF) |
                     (1ull << MSR_VR) |
                     (1ull << MSR_VSX) |
@@ -6321,7 +6325,8 @@ static bool cpu_has_work_POWER8(CPUState *cs)
         }
         return false;
     } else {
-        return msr_ee && (cs->interrupt_request & CPU_INTERRUPT_HARD);
+        return FIELD_EX64(env->msr, MSR, EE) &&
+               (cs->interrupt_request & CPU_INTERRUPT_HARD);
     }
 }
 
@@ -6358,7 +6363,8 @@ POWERPC_FAMILY(POWER8)(ObjectClass *oc, void *data)
                         PPC2_FP_TST_ISA206 | PPC2_BCTAR_ISA207 |
                         PPC2_LSQ_ISA207 | PPC2_ALTIVEC_207 |
                         PPC2_ISA205 | PPC2_ISA207S | PPC2_FP_CVT_S64 |
-                        PPC2_TM | PPC2_PM_ISA206;
+                        PPC2_TM | PPC2_PM_ISA206 | PPC2_MEM_LWSYNC |
+                        PPC2_BCDA_ISA206;
     pcc->msr_mask = (1ull << MSR_SF) |
                     (1ull << MSR_HV) |
                     (1ull << MSR_TM) |
@@ -6504,7 +6510,8 @@ static bool cpu_has_work_POWER9(CPUState *cs)
         if ((env->pending_interrupts & (1u << PPC_INTERRUPT_EXT)) &&
             (env->spr[SPR_LPCR] & LPCR_EEE)) {
             bool heic = !!(env->spr[SPR_LPCR] & LPCR_HEIC);
-            if (heic == 0 || !msr_hv || msr_pr) {
+            if (!heic || !FIELD_EX64_HV(env->msr) ||
+                FIELD_EX64(env->msr, MSR, PR)) {
                 return true;
             }
         }
@@ -6538,7 +6545,8 @@ static bool cpu_has_work_POWER9(CPUState *cs)
         }
         return false;
     } else {
-        return msr_ee && (cs->interrupt_request & CPU_INTERRUPT_HARD);
+        return FIELD_EX64(env->msr, MSR, EE) &&
+               (cs->interrupt_request & CPU_INTERRUPT_HARD);
     }
 }
 
@@ -6565,7 +6573,7 @@ POWERPC_FAMILY(POWER9)(ObjectClass *oc, void *data)
                        PPC_FLOAT_EXT |
                        PPC_CACHE | PPC_CACHE_ICBI | PPC_CACHE_DCBZ |
                        PPC_MEM_SYNC | PPC_MEM_EIEIO |
-                       PPC_MEM_TLBSYNC |
+                       PPC_MEM_TLBIE | PPC_MEM_TLBSYNC |
                        PPC_64B | PPC_64H | PPC_64BX | PPC_ALTIVEC |
                        PPC_SEGMENT_64B | PPC_SLBI |
                        PPC_POPCNTB | PPC_POPCNTWD |
@@ -6576,7 +6584,8 @@ POWERPC_FAMILY(POWER9)(ObjectClass *oc, void *data)
                         PPC2_FP_TST_ISA206 | PPC2_BCTAR_ISA207 |
                         PPC2_LSQ_ISA207 | PPC2_ALTIVEC_207 |
                         PPC2_ISA205 | PPC2_ISA207S | PPC2_FP_CVT_S64 |
-                        PPC2_TM | PPC2_ISA300 | PPC2_PRCNTL;
+                        PPC2_TM | PPC2_ISA300 | PPC2_PRCNTL | PPC2_MEM_LWSYNC |
+                        PPC2_BCDA_ISA206;
     pcc->msr_mask = (1ull << MSR_SF) |
                     (1ull << MSR_HV) |
                     (1ull << MSR_TM) |
@@ -6658,6 +6667,7 @@ static void init_proc_POWER10(CPUPPCState *env)
     register_power5p_common_sprs(env);
     register_power5p_lpar_sprs(env);
     register_power5p_ear_sprs(env);
+    register_power5p_tb_sprs(env);
     register_power6_common_sprs(env);
     register_power6_dbg_sprs(env);
     register_power8_tce_address_control_sprs(env);
@@ -6668,6 +6678,7 @@ static void init_proc_POWER10(CPUPPCState *env)
     register_power8_pmu_user_sprs(env);
     register_power8_tm_sprs(env);
     register_power8_pspb_sprs(env);
+    register_power8_dpdes_sprs(env);
     register_vtb_sprs(env);
     register_power8_ic_sprs(env);
     register_power8_book4_sprs(env);
@@ -6716,7 +6727,8 @@ static bool cpu_has_work_POWER10(CPUState *cs)
         if ((env->pending_interrupts & (1u << PPC_INTERRUPT_EXT)) &&
             (env->spr[SPR_LPCR] & LPCR_EEE)) {
             bool heic = !!(env->spr[SPR_LPCR] & LPCR_HEIC);
-            if (heic == 0 || !msr_hv || msr_pr) {
+            if (!heic || !FIELD_EX64_HV(env->msr) ||
+                FIELD_EX64(env->msr, MSR, PR)) {
                 return true;
             }
         }
@@ -6750,7 +6762,8 @@ static bool cpu_has_work_POWER10(CPUState *cs)
         }
         return false;
     } else {
-        return msr_ee && (cs->interrupt_request & CPU_INTERRUPT_HARD);
+        return FIELD_EX64(env->msr, MSR, EE) &&
+               (cs->interrupt_request & CPU_INTERRUPT_HARD);
     }
 }
 
@@ -6778,7 +6791,7 @@ POWERPC_FAMILY(POWER10)(ObjectClass *oc, void *data)
                        PPC_FLOAT_EXT |
                        PPC_CACHE | PPC_CACHE_ICBI | PPC_CACHE_DCBZ |
                        PPC_MEM_SYNC | PPC_MEM_EIEIO |
-                       PPC_MEM_TLBSYNC |
+                       PPC_MEM_TLBIE | PPC_MEM_TLBSYNC |
                        PPC_64B | PPC_64H | PPC_64BX | PPC_ALTIVEC |
                        PPC_SEGMENT_64B | PPC_SLBI |
                        PPC_POPCNTB | PPC_POPCNTWD |
@@ -6789,7 +6802,8 @@ POWERPC_FAMILY(POWER10)(ObjectClass *oc, void *data)
                         PPC2_FP_TST_ISA206 | PPC2_BCTAR_ISA207 |
                         PPC2_LSQ_ISA207 | PPC2_ALTIVEC_207 |
                         PPC2_ISA205 | PPC2_ISA207S | PPC2_FP_CVT_S64 |
-                        PPC2_TM | PPC2_ISA300 | PPC2_PRCNTL | PPC2_ISA310;
+                        PPC2_TM | PPC2_ISA300 | PPC2_PRCNTL | PPC2_ISA310 |
+                        PPC2_MEM_LWSYNC | PPC2_BCDA_ISA206;
     pcc->msr_mask = (1ull << MSR_SF) |
                     (1ull << MSR_HV) |
                     (1ull << MSR_TM) |
@@ -6864,7 +6878,6 @@ static void init_ppc_proc(PowerPCCPU *cpu)
 #if !defined(CONFIG_USER_ONLY)
     int i;
 
-    env->irq_inputs = NULL;
     /* Set all exception vectors to an invalid address */
     for (i = 0; i < POWERPC_EXCP_NB; i++) {
         env->excp_vectors[i] = (target_ulong)(-1ULL);
@@ -7000,10 +7013,6 @@ static void init_ppc_proc(PowerPCCPU *cpu)
         env->curr_i_shadow_tlb = 0;
         env->last_d_shadow_tlb = 0;
         env->last_i_shadow_tlb = 0;
-    }
-    if (env->irq_inputs == NULL) {
-        warn_report("no internal IRQ controller registered."
-                    " Attempt QEMU to crash very soon !");
     }
 #endif
     if (env->check_pow == NULL) {
@@ -7161,6 +7170,21 @@ static ObjectClass *ppc_cpu_class_by_name(const char *name)
             return OBJECT_CLASS(ppc_cpu_class_by_pvr(pvr));
         }
     }
+
+    /*
+     * All ppc CPUs represent hardware that exists in the real world, i.e.: we
+     * do not have a "max" CPU with all possible emulated features enabled.
+     * Return the default CPU type for the machine because that has greater
+     * chance of being useful as the "max" CPU.
+     */
+#if !defined(CONFIG_USER_ONLY)
+    if (strcmp(name, "max") == 0) {
+        MachineClass *mc = MACHINE_GET_CLASS(qdev_get_machine());
+        if (mc) {
+            return object_class_by_name(mc->default_cpu_type);
+        }
+    }
+#endif
 
     cpu_model = g_ascii_strdown(name, -1);
     p = ppc_cpu_lookup_alias(cpu_model);
@@ -7325,7 +7349,8 @@ static bool ppc_cpu_has_work(CPUState *cs)
     PowerPCCPU *cpu = POWERPC_CPU(cs);
     CPUPPCState *env = &cpu->env;
 
-    return msr_ee && (cs->interrupt_request & CPU_INTERRUPT_HARD);
+    return FIELD_EX64(env->msr, MSR, EE) &&
+           (cs->interrupt_request & CPU_INTERRUPT_HARD);
 }
 
 static void ppc_cpu_reset(DeviceState *dev)
@@ -7358,7 +7383,7 @@ static void ppc_cpu_reset(DeviceState *dev)
 #if defined(TARGET_PPC64)
     msr |= (target_ulong)1 << MSR_TM; /* Transactional memory */
 #endif
-#if !defined(TARGET_WORDS_BIGENDIAN)
+#if !TARGET_BIG_ENDIAN
     msr |= (target_ulong)1 << MSR_LE; /* Little-endian user mode */
     if (!((env->msr_mask >> MSR_LE) & 1)) {
         fprintf(stderr, "Selected CPU does not support little-endian.\n");
@@ -7384,6 +7409,9 @@ static void ppc_cpu_reset(DeviceState *dev)
         }
         pmu_update_summaries(env);
     }
+
+    /* clean any pending stop state */
+    env->resume_as_sreset = 0;
 #endif
     hreg_compute_hflags(env);
     env->reserve_addr = (target_ulong)-1ULL;
@@ -7427,7 +7455,7 @@ static bool ppc_cpu_is_big_endian(CPUState *cs)
 
     cpu_synchronize_state(cs);
 
-    return !msr_le;
+    return !FIELD_EX64(env->msr, MSR, LE);
 }
 
 #ifdef CONFIG_TCG
@@ -7519,8 +7547,6 @@ static void ppc_disas_set_info(CPUState *cs, disassemble_info *info)
         info->mach = bfd_mach_ppc;
 #endif
     }
-    info->disassembler_options = (char *)"any";
-    info->print_insn = print_insn_ppc;
 
     info->cap_arch = CS_ARCH_PPC;
 #ifdef TARGET_PPC64
@@ -7663,17 +7689,15 @@ void ppc_cpu_dump_state(CPUState *cs, FILE *f, int flags)
                  "%08x iidx %d didx %d\n",
                  env->msr, env->spr[SPR_HID0], env->hflags,
                  cpu_mmu_index(env, true), cpu_mmu_index(env, false));
-#if !defined(NO_TIMER_DUMP)
-    qemu_fprintf(f, "TB %08" PRIu32 " %08" PRIu64
 #if !defined(CONFIG_USER_ONLY)
-                 " DECR " TARGET_FMT_lu
-#endif
-                 "\n",
-                 cpu_ppc_load_tbu(env), cpu_ppc_load_tbl(env)
-#if !defined(CONFIG_USER_ONLY)
-                 , cpu_ppc_load_decr(env)
-#endif
-        );
+    if (env->tb_env) {
+        qemu_fprintf(f, "TB %08" PRIu32 " %08" PRIu64
+                     " DECR " TARGET_FMT_lu "\n", cpu_ppc_load_tbu(env),
+                     cpu_ppc_load_tbl(env), cpu_ppc_load_decr(env));
+    }
+#else
+    qemu_fprintf(f, "TB %08" PRIu32 " %08" PRIu64 "\n", cpu_ppc_load_tbu(env),
+                 cpu_ppc_load_tbl(env));
 #endif
     for (i = 0; i < 32; i++) {
         if ((i & (RGPL - 1)) == 0) {
