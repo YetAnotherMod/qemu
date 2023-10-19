@@ -107,7 +107,8 @@ typedef struct {
 
 static int read_send_desc(GRETHState *s, dma_addr_t addr, send_desc_t *desc)
 {
-    if (dma_memory_read(s->addr_space, addr, desc, sizeof(send_desc_t))) {
+    if (dma_memory_read(s->addr_space, addr, desc, sizeof(send_desc_t),
+                        MEMTXATTRS_UNSPECIFIED)) {
         return -1;
     }
     desc->cmd = cpu_to_be32(desc->cmd);
@@ -121,7 +122,8 @@ static int write_send_desc(GRETHState *s, dma_addr_t addr, send_desc_t *desc)
 
     temp.cmd = be32_to_cpu(desc->cmd);
     temp.address = be32_to_cpu(desc->address);
-    if (dma_memory_write(s->addr_space, addr, &temp, sizeof(send_desc_t))) {
+    if (dma_memory_write(s->addr_space, addr, &temp, sizeof(send_desc_t),
+                         MEMTXATTRS_UNSPECIFIED)) {
         return -1;
     }
     return 0;
@@ -129,7 +131,8 @@ static int write_send_desc(GRETHState *s, dma_addr_t addr, send_desc_t *desc)
 
 static int read_recv_desc(GRETHState *s, dma_addr_t addr, recv_desc_t *desc)
 {
-    if (dma_memory_read(s->addr_space, addr, desc, sizeof(recv_desc_t))) {
+    if (dma_memory_read(s->addr_space, addr, desc, sizeof(recv_desc_t),
+                        MEMTXATTRS_UNSPECIFIED)) {
         return -1;
     }
     desc->cmd = cpu_to_be32(desc->cmd);
@@ -143,7 +146,8 @@ static int write_recv_desc(GRETHState *s, dma_addr_t addr, recv_desc_t *desc)
 
     temp.cmd = be32_to_cpu(desc->cmd);
     temp.address = be32_to_cpu(desc->address);
-    if (dma_memory_write(s->addr_space, addr, &temp, sizeof(recv_desc_t))) {
+    if (dma_memory_write(s->addr_space, addr, &temp, sizeof(recv_desc_t),
+                         MEMTXATTRS_UNSPECIFIED)) {
         return -1;
     }
     return 0;
@@ -273,7 +277,7 @@ static ssize_t greth_receive(NetClientState *nc, const uint8_t *buf, size_t len)
         return -1;
     }
 
-    if (dma_memory_write(s->addr_space, desc.address, buf, len)) {
+    if (dma_memory_write(s->addr_space, desc.address, buf, len, MEMTXATTRS_UNSPECIFIED)) {
         s->status |= STATUS_RECV_DMA_ERROR;
         return -1;
     }
@@ -322,7 +326,8 @@ static void greth_send_all(GRETHState *s)
         }
 
         // read data
-        if (dma_memory_read(s->addr_space, desc.address, buffer, desc.length)) {
+        if (dma_memory_read(s->addr_space, desc.address, buffer, desc.length,
+                            MEMTXATTRS_UNSPECIFIED)) {
             s->status |= STATUS_SEND_DMA_ERROR;
             return;
         }

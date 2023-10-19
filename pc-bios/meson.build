@@ -15,7 +15,7 @@ if unpack_edk2_blobs
     roms += custom_target(f,
                   build_by_default: have_system,
                   output: f,
-                  input: '@0@.bz2'.format(f),
+                  input: files('@0@.bz2'.format(f)),
                   capture: true,
                   install: get_option('install_blobs'),
                   install_dir: qemu_datadir,
@@ -80,12 +80,12 @@ blobs = files(
   'hppa-firmware.img',
   'opensbi-riscv32-generic-fw_dynamic.bin',
   'opensbi-riscv64-generic-fw_dynamic.bin',
-  'opensbi-riscv32-generic-fw_dynamic.elf',
-  'opensbi-riscv64-generic-fw_dynamic.elf',
   'npcm7xx_bootrom.bin',
   'module_mb115_rumboot.bin',
   'module_mb115_u-boot.bin',
   'module_mt174_rumboot.bin',
+  'vof.bin',
+  'vof-nvram.bin',
 )
 
 if get_option('install_blobs')

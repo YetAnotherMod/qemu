@@ -254,10 +254,10 @@ static void keyasic_sd_mem_transfer(KeyasicSdState *s)
 
         if (is_write) {
             res = dma_memory_read(s->addr_space, address, s->internal_buffer[buf_ind],
-                                  s->dcdtr[i]);
+                                  s->dcdtr[i], MEMTXATTRS_UNSPECIFIED);
         } else {
             res = dma_memory_write(s->addr_space, address, s->internal_buffer[buf_ind],
-                                  s->dcdtr[i]);
+                                  s->dcdtr[i], MEMTXATTRS_UNSPECIFIED);
         }
 
         if (res) {

@@ -544,7 +544,7 @@ static void mm7705_init(MachineState *machine)
         qdev_connect_gpio_out_named(DEVICE(&s->sdio), "card-inserted", 0,
                               qdev_get_gpio_in(s->lsif1_gpio[1], 1));
 
-        DriveInfo *dinfo = drive_get_next(IF_SD);
+        DriveInfo *dinfo = drive_get(IF_SD, 0, 0);
         if (dinfo) {
             DeviceState *card;
 
@@ -565,7 +565,7 @@ static void mm7705_init(MachineState *machine)
                                     sysbus_mmio_get_region(busdev, 0));
 
         DeviceState *flash_dev = qdev_new("m25p32");
-        DriveInfo *dinfo = drive_get_next(IF_MTD);
+        DriveInfo *dinfo = drive_get(IF_MTD, 0, 0);
         if (dinfo) {
             struct BlockBackend *blk = blk_by_legacy_dinfo(dinfo);
             qdev_prop_set_drive_err(flash_dev, "drive",
