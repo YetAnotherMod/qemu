@@ -621,12 +621,12 @@ static void mm7705_init(MachineState *machine)
     qemu_register_reset(cpu_reset_temp, s->cpu);
 }
 
-static void mm7705_reset(MachineState *machine)
+static void mm7705_reset(MachineState *machine, ShutdownCause reason)
 {
     MM7705MachineState *s = MM7705_MACHINE(machine);
 
     // default action
-    qemu_devices_reset();
+    qemu_devices_reset(reason);
 
     // FIXME: не надо ли как-то по-другому помещать прошивку в память?
     {
