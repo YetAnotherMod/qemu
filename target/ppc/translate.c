@@ -7675,8 +7675,13 @@ static void ppc_tr_translate_insn(DisasContextBase *dcbase, CPUState *cs)
     LOG_DISAS("nip=" TARGET_FMT_lx " super=%d ir=%d\n",
               ctx->base.pc_next, ctx->mem_idx, (int)msr_ir);
 
+    // FIXME: is this shit even allowed to be here??
+    // checking if code is in LE page so we need to swap instruction
+    CPUTLBEntry *entry = tlb_entry(env, cpu_mmu_index(env, true), ctx->base.pc_next);
+    bool tlb_need_swap = !!(entry->addr_code & TLB_BSWAP);
+
     ctx->cia = pc = ctx->base.pc_next;
-    insn = translator_ldl_swap(env, dcbase, pc, need_byteswap(ctx));
+    insn = translator_ldl_swap(env, dcbase, pc, need_byteswap(ctx) | tlb_need_swap);
     ctx->base.pc_next = pc += 4;
 
     if (!is_prefix_insn(ctx, insn)) {
@@ -7692,7 +7697,7 @@ static void ppc_tr_translate_insn(DisasContextBase *dcbase, CPUState *cs)
         ok = true;
     } else {
         uint32_t insn2 = translator_ldl_swap(env, dcbase, pc,
-                                             need_byteswap(ctx));
+                                             need_byteswap(ctx) | tlb_need_swap);
         ctx->base.pc_next = pc += 4;
         ok = decode_insn64(ctx, deposit64(insn2, 32, 32, insn));
     }
