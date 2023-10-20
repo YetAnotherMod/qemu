@@ -5,6 +5,7 @@
 #include "cpu.h"
 #include "sysemu/reset.h"
 #include "sysemu/sysemu.h"
+#include "hw/qdev-properties.h"
 #include "hw/ppc/ppc.h"
 #include "hw/ppc/dcr_mpic.h"
 #include "hw/char/pl011.h"
