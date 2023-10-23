@@ -226,7 +226,7 @@ static void virtio_virtqueue_reset_region_cache(struct VirtQueue *vq)
     }
 }
 
-static void virtio_init_region_cache(VirtIODevice *vdev, int n)
+void virtio_init_region_cache(VirtIODevice *vdev, int n)
 {
     VirtQueue *vq = &vdev->vq[n];
     VRingMemoryRegionCaches *old = vq->vring.caches;
@@ -3321,7 +3321,7 @@ static void virtio_queue_packed_set_last_avail_idx(VirtIODevice *vdev,
     vq->last_avail_wrap_counter =
         vq->shadow_avail_wrap_counter = !!(idx & 0x8000);
     idx >>= 16;
-    vq->used_idx = idx & 0x7ffff;
+    vq->used_idx = idx & 0x7fff;
     vq->used_wrap_counter = !!(idx & 0x8000);
 }
 
@@ -3491,7 +3491,7 @@ static void virtio_queue_host_notifier_aio_poll_end(EventNotifier *n)
 
 void virtio_queue_aio_attach_host_notifier(VirtQueue *vq, AioContext *ctx)
 {
-    aio_set_event_notifier(ctx, &vq->host_notifier, true,
+    aio_set_event_notifier(ctx, &vq->host_notifier,
                            virtio_queue_host_notifier_read,
                            virtio_queue_host_notifier_aio_poll,
                            virtio_queue_host_notifier_aio_poll_ready);
@@ -3508,17 +3508,14 @@ void virtio_queue_aio_attach_host_notifier(VirtQueue *vq, AioContext *ctx)
  */
 void virtio_queue_aio_attach_host_notifier_no_poll(VirtQueue *vq, AioContext *ctx)
 {
-    aio_set_event_notifier(ctx, &vq->host_notifier, true,
+    aio_set_event_notifier(ctx, &vq->host_notifier,
                            virtio_queue_host_notifier_read,
                            NULL, NULL);
 }
 
 void virtio_queue_aio_detach_host_notifier(VirtQueue *vq, AioContext *ctx)
 {
-    aio_set_event_notifier(ctx, &vq->host_notifier, true, NULL, NULL, NULL);
-    /* Test and clear notifier before after disabling event,
-     * in case poll callback didn't have time to run. */
-    virtio_queue_host_notifier_read(&vq->host_notifier);
+    aio_set_event_notifier(ctx, &vq->host_notifier, NULL, NULL, NULL);
 }
 
 void virtio_queue_host_notifier_read(EventNotifier *n)
