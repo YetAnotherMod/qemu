@@ -21,8 +21,8 @@ To start MB115.01 you can use following command:
 ```bash
     sudo ./qemu-system-ppc \
         -M mb115.01 \
-        -bios pc-bios/module_mb115_rumboot.bin \
-        -drive file=pc-bios/module_mb115_u-boot.bin,if=mtd,format=raw \
+        -bios ../pc-bios/module_mb115_rumboot.bin \
+        -drive file=../pc-bios/module_mb115_u-boot.bin,if=mtd,format=raw \
         -monitor tcp::2345,server,nowait \
         -serial tcp::3555,server,nodelay,nowait \
         -gdb tcp::1234,server,nowait \
@@ -34,7 +34,7 @@ To start MT174.04 you can use following command:
 ```bash
     sudo ./qemu-system-ppc \
         -M mt174.04 \
-        -bios pc-bios/module_mt174_rumboot.bin \
+        -bios ../pc-bios/module_mt174_rumboot.bin \
         -monitor tcp::2345,server,nowait \
         -serial tcp::3555,server,nodelay,nowait \
         -gdb tcp::1234,server,nowait
