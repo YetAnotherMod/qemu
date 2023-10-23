@@ -1,6 +1,7 @@
 #include "qemu/osdep.h"
 #include "qemu/units.h"
 #include "qapi/error.h"
+#include "qapi/visitor.h"
 #include "hw/boards.h"
 #include "cpu.h"
 #include "sysemu/reset.h"
@@ -24,13 +25,15 @@ typedef struct {
 
     DeviceState *gpio[1];
 
-    // FIXME: write a normal SCTL logic or smth
+    /* board properties */
     uint8_t boot_cfg;
 }  MT174MachineState;
 
 #define TYPE_MT174_MACHINE MACHINE_TYPE_NAME("mt174.04")
 #define MT174_MACHINE(obj) \
     OBJECT_CHECK(MT174MachineState, obj, TYPE_MT174_MACHINE)
+
+#define MT174_BOOT_CFG_DEFVAL 0x82
 
 /* DCR registers */
 static int dcr_read_error(int dcrn)
@@ -457,15 +460,21 @@ static void mt174_reset(MachineState *machine, ShutdownCause reason)
             MEMTXATTRS_UNSPECIFIED, data, file_size);
     }
 
-    s->boot_cfg = 0x82;
-    uint32_t boot_cfg = s->boot_cfg;
-
     // Set GPIO0 pins
+    uint32_t boot_cfg = s->boot_cfg;
     for (int i = 0; boot_cfg; i++, boot_cfg >>= 1) {
         if (boot_cfg & (1<<i)) {
             qemu_irq_raise(qdev_get_gpio_in(s->gpio[0], i));
         }
     }
+}
+
+static void mt174_boot_cfg_get_and_set(Object *obj, Visitor *v, const char *name,
+                                        void *opaque, Error **errp)
+{
+    MT174MachineState *s = MT174_MACHINE(obj);
+
+    visit_type_uint8(v, name, &s->boot_cfg, errp);
 }
 
 static void mt174_class_init(ObjectClass *oc, void *data)
@@ -477,6 +486,11 @@ static void mt174_class_init(ObjectClass *oc, void *data)
     mc->init = mt174_init;
     mc->reset = mt174_reset;
     mc->default_cpu_type = POWERPC_CPU_TYPE_NAME("476fp");
+
+    ObjectProperty *prop;
+    prop = object_class_property_add(oc, "boot-cfg", "uint8", mt174_boot_cfg_get_and_set,
+                                     mt174_boot_cfg_get_and_set, NULL, NULL);
+    object_property_set_default_uint(prop, MT174_BOOT_CFG_DEFVAL);
 }
 
 static const TypeInfo mt174_info = {

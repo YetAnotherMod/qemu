@@ -1,6 +1,7 @@
 #include "qemu/osdep.h"
 #include "qemu/units.h"
 #include "qapi/error.h"
+#include "qapi/visitor.h"
 #include "hw/boards.h"
 #include "cpu.h"
 #include "sysemu/reset.h"
@@ -38,11 +39,16 @@ typedef struct {
     GRETHState gb_greth[2];
 
     KeyasicSdState sdio;
+
+    /* board properties */
+    uint8_t boot_cfg;
 } MM7705MachineState;
 
 #define TYPE_MM7705_MACHINE MACHINE_TYPE_NAME("mb115.01")
 #define MM7705_MACHINE(obj) \
     OBJECT_CHECK(MM7705MachineState, obj, TYPE_MM7705_MACHINE)
+
+#define MM7705_BOOT_CFG_DEFVAL 0x16
 
 /* DCR registers */
 static int dcr_read_error(int dcrn)
@@ -651,15 +657,14 @@ static void mm7705_reset(MachineState *machine, ShutdownCause reason)
     }
 
     // STCL
-    uint8_t boot_cfg = 0x16;
     if (address_space_write(&address_space_memory, 0x1038000000,
-            MEMTXATTRS_UNSPECIFIED, &boot_cfg, 1) != 0) {
+            MEMTXATTRS_UNSPECIFIED, &s->boot_cfg, sizeof(s->boot_cfg)) != 0) {
         printf("shit!!1\n");
     }
 
     uint8_t pll_state = 0x3f;
     if (address_space_write(&address_space_memory, 0x1038000004,
-            MEMTXATTRS_UNSPECIFIED, &pll_state, 1) != 0) {
+            MEMTXATTRS_UNSPECIFIED, &pll_state, sizeof(pll_state)) != 0) {
         printf("shit!!2\n");
     }
 
@@ -668,11 +673,20 @@ static void mm7705_reset(MachineState *machine, ShutdownCause reason)
     memory_region_add_subregion(get_system_memory(), 0x1038006000, cpu_pll);
 
     // Set GPIO0 pins
+    uint8_t boot_cfg = s->boot_cfg;
     for (int i = 0; boot_cfg; i++, boot_cfg >>= 1) {
         if (boot_cfg & (1<<i)) {
             qemu_irq_raise(qdev_get_gpio_in(s->lsif1_gpio[0], i));
         }
     }
+}
+
+static void mm7705_boot_cfg_get_and_set(Object *obj, Visitor *v, const char *name,
+                                        void *opaque, Error **errp)
+{
+    MM7705MachineState *s = MM7705_MACHINE(obj);
+
+    visit_type_uint8(v, name, &s->boot_cfg, errp);
 }
 
 static void mm7705_class_init(ObjectClass *oc, void *data)
@@ -685,8 +699,11 @@ static void mm7705_class_init(ObjectClass *oc, void *data)
     mc->init = mm7705_init;
     mc->reset = mm7705_reset;
     mc->default_cpu_type = POWERPC_CPU_TYPE_NAME("476fp");
-    // FIXME: используется ли данное имя и вообще к чему относится
-    mc->default_ram_id = "mm7705.ram";
+
+    ObjectProperty *prop;
+    prop = object_class_property_add(oc, "boot-cfg", "uint8", mm7705_boot_cfg_get_and_set,
+                                     mm7705_boot_cfg_get_and_set, NULL, NULL);
+    object_property_set_default_uint(prop, MM7705_BOOT_CFG_DEFVAL);
 }
 
 static const TypeInfo mm7705_info = {
