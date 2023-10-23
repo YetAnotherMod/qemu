@@ -290,9 +290,19 @@ static void mt174_init(MachineState *machine)
     qdev_connect_gpio_out_named(DEVICE(&s->mpic), "crit_int", 0,
                                 qdev_get_gpio_in(DEVICE(s->cpu), PPC40x_INPUT_CINT));
 
+    /* Board has separated AXI bus for peripherial devices */
+    MemoryRegion *axi_mem = g_new(MemoryRegion, 1);
+    AddressSpace *axi_addr_space = g_new(AddressSpace, 1);
+    memory_region_init(axi_mem, NULL, "axi_mem", ~0u);
+    address_space_init(axi_addr_space, axi_mem, "axi_addr_space");
+
     MemoryRegion *EMI = g_new(MemoryRegion, 1);
     memory_region_init_ram(EMI, NULL, "EMI", 0x200000000, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x0, EMI);
+
+    MemoryRegion *EMI_on_AXI = g_new(MemoryRegion, 1);
+    memory_region_init_alias(EMI_on_AXI, NULL, "EMI_on_AXI", EMI, 0, 0x80000000);
+    memory_region_add_subregion(axi_mem, 0x0, EMI_on_AXI);
 
     MemoryRegion *IM0 = g_new(MemoryRegion, 1);
     memory_region_init_ram(IM0, NULL, "IM0", 0x20000, &error_fatal);
@@ -305,6 +315,10 @@ static void mt174_init(MachineState *machine)
     MemoryRegion *IM1 = g_new(MemoryRegion, 1);
     memory_region_init_ram(IM1, NULL, "IM1", 0x20000, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0000000, IM1);
+
+    MemoryRegion *IM1_on_AXI = g_new(MemoryRegion, 1);
+    memory_region_init_alias(IM1_on_AXI, NULL, "IM1_on_AXI", IM1, 0, 0x20000);
+    memory_region_add_subregion(axi_mem, 0xc0000000, IM1_on_AXI);
 
     MemoryRegion *mko0 = g_new(MemoryRegion, 1);
     memory_region_init_ram(mko0, NULL, "mko0", 0x1000, &error_fatal);
@@ -373,6 +387,10 @@ static void mt174_init(MachineState *machine)
     MemoryRegion *IM2 = g_new(MemoryRegion, 1);
     memory_region_init_ram(IM2, NULL, "IM2", 0x20000, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0040000, IM2);
+
+    MemoryRegion *IM2_on_AXI = g_new(MemoryRegion, 1);
+    memory_region_init_alias(IM2_on_AXI, NULL, "IM2_on_AXI", IM2, 0, 0x20000);
+    memory_region_add_subregion(axi_mem, 0xc0040000, IM2_on_AXI);
 
     MemoryRegion *IM3 = g_new(MemoryRegion, 1);
     memory_region_init_ram(IM3, NULL, "IM3", 0x20000, &error_fatal);
