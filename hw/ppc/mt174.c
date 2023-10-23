@@ -23,7 +23,7 @@ typedef struct {
 
     PL011State uart[2];
 
-    DeviceState *gpio[1];
+    DeviceState *gpio[2];
 
     /* board properties */
     uint8_t boot_cfg;
@@ -346,9 +346,7 @@ static void mt174_init(MachineState *machine)
     memory_region_init_ram(mko3, NULL, "mko3", 0x1000, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0031000, mko3);
 
-    MemoryRegion *gpio1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(gpio1, NULL, "gpio1", 0x1000, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c0038000, gpio1);
+    s->gpio[1] = sysbus_create_simple("pl061", 0x20c0038000, NULL);
 
     if (serial_hd(1)) {
         object_initialize_child(OBJECT(s), "uart1", &s->uart[0], TYPE_PL011);
