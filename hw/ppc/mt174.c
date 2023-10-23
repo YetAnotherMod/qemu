@@ -10,6 +10,7 @@
 #include "hw/ppc/ppc.h"
 #include "hw/ppc/dcr_mpic.h"
 #include "hw/char/pl011.h"
+#include "hw/net/greth.h"
 #include "hw/irq.h"
 #include "exec/memory.h"
 #include "exec/address-spaces.h"
@@ -24,6 +25,8 @@ typedef struct {
     PL011State uart[2];
 
     DeviceState *gpio[2];
+
+    GRETHState greth[2];
 
     /* board properties */
     uint8_t boot_cfg;
@@ -340,9 +343,13 @@ static void mt174_init(MachineState *machine)
         sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 36));
     }
 
-    MemoryRegion *eth0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(eth0, NULL, "eth0", 0x1000, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c002a000, eth0);
+    object_initialize_child(OBJECT(s), "eth0", &s->greth[0], TYPE_GRETH);
+    greth_change_address_space(&s->greth[0], axi_addr_space, &error_fatal);
+    sysbus_realize(SYS_BUS_DEVICE(&s->greth[0]), &error_fatal);
+    busdev = SYS_BUS_DEVICE(&s->greth[0]);
+    memory_region_add_subregion(get_system_memory(), 0x20c002a000,
+                                sysbus_mmio_get_region(busdev, 0));
+    sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 52));
 
     MemoryRegion *spi0 = g_new(MemoryRegion, 1);
     memory_region_init_ram(spi0, NULL, "spi0", 0x1000, &error_fatal);
@@ -372,9 +379,13 @@ static void mt174_init(MachineState *machine)
         sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 37));
     }
 
-    MemoryRegion *eth1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(eth1, NULL, "eth1", 0x1000, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c003a000, eth1);
+    object_initialize_child(OBJECT(s), "eth1", &s->greth[1], TYPE_GRETH);
+    greth_change_address_space(&s->greth[1], axi_addr_space, &error_fatal);
+    sysbus_realize(SYS_BUS_DEVICE(&s->greth[1]), &error_fatal);
+    busdev = SYS_BUS_DEVICE(&s->greth[1]);
+    memory_region_add_subregion(get_system_memory(), 0x20c003a000,
+                                sysbus_mmio_get_region(busdev, 0));
+    sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 53));
 
     MemoryRegion *spi1 = g_new(MemoryRegion, 1);
     memory_region_init_ram(spi1, NULL, "spi1", 0x1000, &error_fatal);
