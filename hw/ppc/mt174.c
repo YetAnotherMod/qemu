@@ -323,7 +323,7 @@ static void mt174_init(MachineState *machine)
         busdev = SYS_BUS_DEVICE(&s->uart[0]);
         memory_region_add_subregion(get_system_memory(), 0x20c0029000,
                                     sysbus_mmio_get_region(busdev, 0));
-        // sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 101));
+        sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 36));
     }
 
     MemoryRegion *eth0 = g_new(MemoryRegion, 1);
@@ -355,7 +355,7 @@ static void mt174_init(MachineState *machine)
         busdev = SYS_BUS_DEVICE(&s->uart[0]);
         memory_region_add_subregion(get_system_memory(), 0x20c0039000,
                                     sysbus_mmio_get_region(busdev, 0));
-        // sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 101));
+        sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 37));
     }
 
     MemoryRegion *eth1 = g_new(MemoryRegion, 1);
