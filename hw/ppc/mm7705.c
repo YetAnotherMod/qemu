@@ -278,7 +278,7 @@ static void create_initial_mapping(CPUPPCState *env)
 
     tlb->attr = 0;
     tlb->prot = PAGE_VALID | ((PAGE_READ | PAGE_WRITE | PAGE_EXEC) << 4);
-    tlb->size = 4*KiB;
+    tlb->size = 4 * KiB;
     tlb->EPN = 0xfffff000 & TARGET_PAGE_MASK;
     tlb->RPN = 0x3fffffff000;
     tlb->PID = 0;
@@ -360,93 +360,95 @@ static void mm7705_init(MachineState *machine)
 
 
     MemoryRegion *EM0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(EM0, NULL, "EM0", 0x200000000, &error_fatal);
+    memory_region_init_ram(EM0, NULL, "EM0", 8 * GiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x0, EM0);
 
     MemoryRegion *EM0_alias = g_new(MemoryRegion, 1);
-    memory_region_init_alias(EM0_alias, NULL, "EM0_alias", EM0, 0, 0x40000000);
+    memory_region_init_alias(EM0_alias, NULL, "EM0_alias", EM0, 0, 1 * GiB);
     memory_region_add_subregion(axi_mem, 0x40000000, EM0_alias);
 
     MemoryRegion *EM1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(EM1, NULL, "EM1", 0x200000000, &error_fatal);
+    memory_region_init_ram(EM1, NULL, "EM1", 8 * GiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x200000000, EM1);
 
     MemoryRegion *EM1_alias = g_new(MemoryRegion, 1);
-    memory_region_init_alias(EM1_alias, NULL, "EM1_alias", EM1, 0, 0x80000000);
+    memory_region_init_alias(EM1_alias, NULL, "EM1_alias", EM1, 0, 2 * GiB);
     memory_region_add_subregion(axi_mem, 0x80000000, EM1_alias);
 
     MemoryRegion *EM2 = g_new(MemoryRegion, 1);
-    memory_region_init_alias(EM2, NULL, "EM2", EM0, 0, 0x200000000);
+    memory_region_init_alias(EM2, NULL, "EM2", EM0, 0, 8 * GiB);
     memory_region_add_subregion(get_system_memory(), 0x400000000, EM2);
 
     MemoryRegion *EM3 = g_new(MemoryRegion, 1);
-    memory_region_init_alias(EM3, NULL, "EM3", EM1, 0, 0x200000000);
+    memory_region_init_alias(EM3, NULL, "EM3", EM1, 0, 8 * GiB);
     memory_region_add_subregion(get_system_memory(), 0x600000000, EM3);
 
 
     MemoryRegion *IM0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(IM0, NULL, "IM0", 0x40000, &error_fatal);
+    memory_region_init_ram(IM0, NULL, "IM0", 256 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x1000040000, IM0);
 
     MemoryRegion *IM0_alias = g_new(MemoryRegion, 1);
-    memory_region_init_alias(IM0_alias, NULL, "IM0_alias", IM0, 0, 0x40000);
+    memory_region_init_alias(IM0_alias, NULL, "IM0_alias", IM0, 0, 256 * KiB);
     memory_region_add_subregion(axi_mem, 0x40000, IM0_alias);
 
 
     MemoryRegion *IFSYS0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(IFSYS0, NULL, "IFSYS0", 0x28000000, &error_fatal);
+    memory_region_init_ram(IFSYS0, NULL, "IFSYS0", 640 * MiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x1010000000, IFSYS0);
 
     MemoryRegion *APB0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(APB0, NULL, "APB0", 0x10000, &error_fatal);
+    memory_region_init_ram(APB0, NULL, "APB0", 64 * KiB, &error_fatal);
     memory_region_add_subregion_overlap(get_system_memory(), 0x1038000000,
                                 APB0, -10);
 
     MemoryRegion *APB1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(APB1, NULL, "APB1", 0x14000, &error_fatal);
+    memory_region_init_ram(APB1, NULL, "APB1", 80 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x1038010000, APB1);
 
 
     MemoryRegion *NIC301_A_CFG = g_new(MemoryRegion, 1);
-    memory_region_init_ram(NIC301_A_CFG, NULL, "NIC301_A_CFG", 0x100000, &error_fatal);
+    memory_region_init_ram(NIC301_A_CFG, NULL, "NIC301_A_CFG", 1 * MiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x1038100000, NIC301_A_CFG);
 
     MemoryRegion *NIC301_DSP0_CFG = g_new(MemoryRegion, 1);
-    memory_region_init_ram(NIC301_DSP0_CFG, NULL, "NIC301_DSP0_CFG", 0x100000, &error_fatal);
+    memory_region_init_ram(NIC301_DSP0_CFG, NULL, "NIC301_DSP0_CFG", 1 * MiB,
+                           &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x1038200000, NIC301_DSP0_CFG);
 
     MemoryRegion *NIC301_DSP1_CFG = g_new(MemoryRegion, 1);
-    memory_region_init_ram(NIC301_DSP1_CFG, NULL, "NIC301_DSP1_CFG", 0x100000, &error_fatal);
+    memory_region_init_ram(NIC301_DSP1_CFG, NULL, "NIC301_DSP1_CFG", 1 * MiB,
+                           &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x1038300000, NIC301_DSP1_CFG);
 
 
     MemoryRegion *DSP0_NM0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(DSP0_NM0, NULL, "DSP0_NM0", 0x20000, &error_fatal);
+    memory_region_init_ram(DSP0_NM0, NULL, "DSP0_NM0", 128 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x1039000000, DSP0_NM0);
 
     MemoryRegion *DSP0_NM1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(DSP0_NM1, NULL, "DSP0_NM1", 0x20000, &error_fatal);
+    memory_region_init_ram(DSP0_NM1, NULL, "DSP0_NM1", 128 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x1039020000, DSP0_NM1);
 
     MemoryRegion *DSP1_NM0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(DSP1_NM0, NULL, "DSP1_NM0", 0x20000, &error_fatal);
+    memory_region_init_ram(DSP1_NM0, NULL, "DSP1_NM0", 128 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x1039040000, DSP1_NM0);
 
     MemoryRegion *DSP1_NM1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(DSP1_NM1, NULL, "DSP1_NM1", 0x20000, &error_fatal);
+    memory_region_init_ram(DSP1_NM1, NULL, "DSP1_NM1", 128 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x1039060000, DSP1_NM1);
 
     MemoryRegion *I2S = g_new(MemoryRegion, 1);
-    memory_region_init_ram(I2S, NULL, "I2S", 0x1000, &error_fatal);
+    memory_region_init_ram(I2S, NULL, "I2S", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x1039080000, I2S);
 
     MemoryRegion *SPDIF = g_new(MemoryRegion, 1);
-    memory_region_init_ram(SPDIF, NULL, "SPDIF", 0x1000, &error_fatal);
+    memory_region_init_ram(SPDIF, NULL, "SPDIF", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x1039081000, SPDIF);
 
 
     MemoryRegion *IFSYS1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(IFSYS1, NULL, "IFSYS1", 0x4000000, &error_fatal);
+    memory_region_init_ram(IFSYS1, NULL, "IFSYS1", 64 * MiB, &error_fatal);
     // make this memory as fallback
     memory_region_add_subregion_overlap(get_system_memory(), 0x103c000000,
                                 IFSYS1, -10);
@@ -604,25 +606,26 @@ static void mm7705_init(MachineState *machine)
     }
 
     MemoryRegion *BOOT_ROM_1 = g_new(MemoryRegion, 1);
-    memory_region_init_rom(BOOT_ROM_1, NULL, "BOOT_ROM_1", 0x40000, &error_fatal);
+    memory_region_init_rom(BOOT_ROM_1, NULL, "BOOT_ROM_1", 256 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x1100000000, BOOT_ROM_1);
 
     MemoryRegion *BOOT_ROM_1_alias = g_new(MemoryRegion, 1);
-    memory_region_init_alias(BOOT_ROM_1_alias, NULL, "BOOT_ROM_1_alias", BOOT_ROM_1, 0, 0x40000);
+    memory_region_init_alias(BOOT_ROM_1_alias, NULL, "BOOT_ROM_1_alias", BOOT_ROM_1, 0,
+                             256 * KiB);
     memory_region_add_subregion(axi_mem, 0x0, BOOT_ROM_1_alias);
 
 
     MemoryRegion *XHSIF0 = g_new(MemoryRegion, 1);
-    memory_region_init_rom(XHSIF0, NULL, "XHSIF0", 0x100000000, &error_fatal);
+    memory_region_init_rom(XHSIF0, NULL, "XHSIF0", 4 * GiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x1200000000, XHSIF0);
 
     MemoryRegion *XHSIF1 = g_new(MemoryRegion, 1);
-    memory_region_init_rom(XHSIF1, NULL, "XHSIF1", 0x100000000, &error_fatal);
+    memory_region_init_rom(XHSIF1, NULL, "XHSIF1", 4 * GiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x1300000000, XHSIF1);
 
 
     MemoryRegion *BOOT_ROM = g_new(MemoryRegion, 1);
-    memory_region_init_alias(BOOT_ROM, NULL, "BOOT_ROM", BOOT_ROM_1, 0, 0x40000);
+    memory_region_init_alias(BOOT_ROM, NULL, "BOOT_ROM", BOOT_ROM_1, 0, 256 * KiB);
     memory_region_add_subregion(get_system_memory(), 0x3fffffc0000, BOOT_ROM);
 
     qemu_register_reset(cpu_reset_temp, s->cpu);
@@ -637,8 +640,8 @@ static void mm7705_reset(MachineState *machine, ShutdownCause reason)
 
     // FIXME: не надо ли как-то по-другому помещать прошивку в память?
     {
-        uint32_t file_size = 256*KiB;
-        uint8_t data[256*KiB];
+        uint32_t file_size = 256 * KiB;
+        uint8_t data[256 * KiB];
         int fd = open(machine->firmware, O_RDONLY);
 
         if (fd == -1) {
