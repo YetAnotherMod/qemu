@@ -11,6 +11,8 @@
 #include "hw/ppc/dcr_mpic.h"
 #include "hw/char/pl011.h"
 #include "hw/net/greth.h"
+#include "hw/sd/sd.h"
+#include "hw/sd/keyasic_sd.h"
 #include "hw/irq.h"
 #include "exec/memory.h"
 #include "exec/address-spaces.h"
@@ -28,6 +30,8 @@ typedef struct {
 
     GRETHState greth[2];
 
+    KeyasicSdState sdio;
+
     /* board properties */
     uint8_t boot_cfg;
 }  MT174MachineState;
@@ -37,6 +41,7 @@ typedef struct {
     OBJECT_CHECK(MT174MachineState, obj, TYPE_MT174_MACHINE)
 
 #define MT174_BOOT_CFG_DEFVAL 0x82
+#define MT174_SD_CARD_INSERTED_GPIO 3
 
 /* DCR registers */
 static int dcr_read_error(int dcrn)
@@ -219,6 +224,20 @@ static void dcr_unknown64k(CPUPPCState *env, uint32_t base)
     }
 }
 
+/**/
+static void mt174_sdio_card_inserted(void *opaque, int n, int level) {
+    MT174MachineState *s = MT174_MACHINE(opaque);
+
+    // set boot_cfg 3rd bit according to "card-inserted" state
+    if (level) {
+        s->boot_cfg |= 1u << MT174_SD_CARD_INSERTED_GPIO;
+    } else {
+        s->boot_cfg &= ~(1u << MT174_SD_CARD_INSERTED_GPIO);
+    }
+
+    qemu_set_irq(qdev_get_gpio_in(s->gpio[0], MT174_SD_CARD_INSERTED_GPIO), level);
+}
+
 /* Machine init */
 static void create_initial_mapping(CPUPPCState *env)
 {
@@ -355,9 +374,29 @@ static void mt174_init(MachineState *machine)
     memory_region_init_ram(spi0, NULL, "spi0", 0x1000, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c002b000, spi0);
 
-    MemoryRegion *sdio0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(sdio0, NULL, "sdio0", 0x1000, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c002c000, sdio0);
+    object_initialize_child(OBJECT(s), "sdio", &s->sdio, TYPE_KEYASIC_SD);
+    keyasic_sd_change_address_space(&s->sdio, axi_addr_space, &error_fatal);
+    sysbus_realize(SYS_BUS_DEVICE(&s->sdio), &error_fatal);
+    busdev = SYS_BUS_DEVICE(&s->sdio);
+    memory_region_add_subregion(get_system_memory(), 0x20c002c000,
+                                sysbus_mmio_get_region(busdev, 0));
+    sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 34));
+
+    // Connect SD card presence (3rd pin of gpio0) with SDIO controller
+    qdev_connect_gpio_out_named(DEVICE(&s->sdio), "card-inserted", 0,
+                          qemu_allocate_irq(mt174_sdio_card_inserted, s, 1));
+
+    dinfo = drive_get(IF_SD, 0, 0);
+    if (dinfo) {
+        DeviceState *card;
+
+        card = qdev_new(TYPE_SD_CARD);
+        qdev_prop_set_drive_err(card, "drive", blk_by_legacy_dinfo(dinfo),
+                                &error_fatal);
+        qdev_prop_set_uint8(card, "spec_version", SD_PHY_SPECv3_01_VERS);
+        qdev_realize_and_unref(card, qdev_get_child_bus(DEVICE(&s->sdio), "sd-bus"),
+                               &error_fatal);
+    }
 
     MemoryRegion *mko1 = g_new(MemoryRegion, 1);
     memory_region_init_ram(mko1, NULL, "mko1", 0x1000, &error_fatal);
