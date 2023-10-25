@@ -10,6 +10,9 @@
 #include "hw/ppc/ppc.h"
 #include "hw/ppc/dcr_mpic.h"
 #include "hw/char/pl011.h"
+#include "hw/net/greth.h"
+#include "hw/sd/sd.h"
+#include "hw/sd/keyasic_sd.h"
 #include "hw/irq.h"
 #include "exec/memory.h"
 #include "exec/address-spaces.h"
@@ -23,7 +26,11 @@ typedef struct {
 
     PL011State uart[2];
 
-    DeviceState *gpio[1];
+    DeviceState *gpio[2];
+
+    GRETHState greth[2];
+
+    KeyasicSdState sdio;
 
     /* board properties */
     uint8_t boot_cfg;
@@ -34,6 +41,7 @@ typedef struct {
     OBJECT_CHECK(MT174MachineState, obj, TYPE_MT174_MACHINE)
 
 #define MT174_BOOT_CFG_DEFVAL 0x82
+#define MT174_SD_CARD_INSERTED_GPIO 3
 
 /* DCR registers */
 static int dcr_read_error(int dcrn)
@@ -216,6 +224,20 @@ static void dcr_unknown64k(CPUPPCState *env, uint32_t base)
     }
 }
 
+/**/
+static void mt174_sdio_card_inserted(void *opaque, int n, int level) {
+    MT174MachineState *s = MT174_MACHINE(opaque);
+
+    // set boot_cfg 3rd bit according to "card-inserted" state
+    if (level) {
+        s->boot_cfg |= 1u << MT174_SD_CARD_INSERTED_GPIO;
+    } else {
+        s->boot_cfg &= ~(1u << MT174_SD_CARD_INSERTED_GPIO);
+    }
+
+    qemu_set_irq(qdev_get_gpio_in(s->gpio[0], MT174_SD_CARD_INSERTED_GPIO), level);
+}
+
 /* Machine init */
 static void create_initial_mapping(CPUPPCState *env)
 {
@@ -223,7 +245,7 @@ static void create_initial_mapping(CPUPPCState *env)
 
     tlb->attr = 0;
     tlb->prot = PAGE_VALID | ((PAGE_READ | PAGE_WRITE | PAGE_EXEC) << 4);
-    tlb->size = 4*KiB;
+    tlb->size = 4 * KiB;
     tlb->EPN = 0xfffff000 & TARGET_PAGE_MASK;
     tlb->RPN = 0x3fffffff000;
     tlb->PID = 0;
@@ -290,28 +312,67 @@ static void mt174_init(MachineState *machine)
     qdev_connect_gpio_out_named(DEVICE(&s->mpic), "crit_int", 0,
                                 qdev_get_gpio_in(DEVICE(s->cpu), PPC40x_INPUT_CINT));
 
+    /* Board has separated AXI bus for peripherial devices */
+    MemoryRegion *axi_mem = g_new(MemoryRegion, 1);
+    AddressSpace *axi_addr_space = g_new(AddressSpace, 1);
+    memory_region_init(axi_mem, NULL, "axi_mem", ~0u);
+    address_space_init(axi_addr_space, axi_mem, "axi_addr_space");
+
     MemoryRegion *EMI = g_new(MemoryRegion, 1);
-    memory_region_init_ram(EMI, NULL, "EMI", 0x200000000, &error_fatal);
+    memory_region_init_ram(EMI, NULL, "EMI", 8 * GiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x0, EMI);
 
+    MemoryRegion *EMI_on_AXI = g_new(MemoryRegion, 1);
+    memory_region_init_alias(EMI_on_AXI, NULL, "EMI_on_AXI", EMI, 0, 2 * GiB);
+    memory_region_add_subregion(axi_mem, 0x0, EMI_on_AXI);
+
+    DriveInfo *dinfo = drive_get(IF_PFLASH, 0, 0);
+    if (dinfo) {
+        DeviceState *pflash = qdev_new("cfi.pflash02");
+
+        qdev_prop_set_drive(pflash, "drive", blk_by_legacy_dinfo(dinfo));
+
+        qdev_prop_set_uint32(pflash, "num-blocks", 512);
+        qdev_prop_set_uint32(pflash, "sector-length", 256 * KiB);
+
+        qdev_prop_set_uint8(pflash, "width", 4);
+        qdev_prop_set_uint8(pflash, "mappings", 1);
+        qdev_prop_set_uint8(pflash, "big-endian", 0);
+        qdev_prop_set_uint16(pflash, "id0", 0x0001);
+        qdev_prop_set_uint16(pflash, "id1", 0x0000);
+        qdev_prop_set_uint16(pflash, "id2", 0x0003);
+        qdev_prop_set_uint16(pflash, "id3", 0x0001);
+        qdev_prop_set_uint16(pflash, "unlock-addr0", 0x0AAA);
+        qdev_prop_set_uint16(pflash, "unlock-addr1", 0x0555);
+        qdev_prop_set_string(pflash, "name", "nor_flash");
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(pflash), &error_fatal);
+
+        MemoryRegion *pflash_region = sysbus_mmio_get_region(SYS_BUS_DEVICE(pflash), 0);
+        memory_region_add_subregion_overlap(EMI, 0x70000000, pflash_region, 1);
+    }
+
     MemoryRegion *IM0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(IM0, NULL, "IM0", 0x20000, &error_fatal);
+    memory_region_init_ram(IM0, NULL, "IM0", 128 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x1080000000, IM0);
 
     MemoryRegion *rom = g_new(MemoryRegion, 1);
-    memory_region_init_rom(rom, NULL, "rom", 0x10000, &error_fatal);
+    memory_region_init_rom(rom, NULL, "rom", 64 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x1fffff0000, rom);
 
     MemoryRegion *IM1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(IM1, NULL, "IM1", 0x20000, &error_fatal);
+    memory_region_init_ram(IM1, NULL, "IM1", 128 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0000000, IM1);
 
+    MemoryRegion *IM1_on_AXI = g_new(MemoryRegion, 1);
+    memory_region_init_alias(IM1_on_AXI, NULL, "IM1_on_AXI", IM1, 0, 128 * KiB);
+    memory_region_add_subregion(axi_mem, 0xc0000000, IM1_on_AXI);
+
     MemoryRegion *mko0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(mko0, NULL, "mko0", 0x1000, &error_fatal);
+    memory_region_init_ram(mko0, NULL, "mko0", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0020000, mko0);
 
     MemoryRegion *mko2 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(mko2, NULL, "mko2", 0x1000, &error_fatal);
+    memory_region_init_ram(mko2, NULL, "mko2", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0021000, mko2);
 
     s->gpio[0] = sysbus_create_simple("pl061", 0x20c0028000, NULL);
@@ -323,32 +384,54 @@ static void mt174_init(MachineState *machine)
         busdev = SYS_BUS_DEVICE(&s->uart[0]);
         memory_region_add_subregion(get_system_memory(), 0x20c0029000,
                                     sysbus_mmio_get_region(busdev, 0));
-        // sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 101));
+        sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 36));
     }
 
-    MemoryRegion *eth0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(eth0, NULL, "eth0", 0x1000, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c002a000, eth0);
+    object_initialize_child(OBJECT(s), "eth0", &s->greth[0], TYPE_GRETH);
+    greth_change_address_space(&s->greth[0], axi_addr_space, &error_fatal);
+    sysbus_realize(SYS_BUS_DEVICE(&s->greth[0]), &error_fatal);
+    busdev = SYS_BUS_DEVICE(&s->greth[0]);
+    memory_region_add_subregion(get_system_memory(), 0x20c002a000,
+                                sysbus_mmio_get_region(busdev, 0));
+    sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 52));
 
     MemoryRegion *spi0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(spi0, NULL, "spi0", 0x1000, &error_fatal);
+    memory_region_init_ram(spi0, NULL, "spi0", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c002b000, spi0);
 
-    MemoryRegion *sdio0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(sdio0, NULL, "sdio0", 0x1000, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c002c000, sdio0);
+    object_initialize_child(OBJECT(s), "sdio", &s->sdio, TYPE_KEYASIC_SD);
+    keyasic_sd_change_address_space(&s->sdio, axi_addr_space, &error_fatal);
+    sysbus_realize(SYS_BUS_DEVICE(&s->sdio), &error_fatal);
+    busdev = SYS_BUS_DEVICE(&s->sdio);
+    memory_region_add_subregion(get_system_memory(), 0x20c002c000,
+                                sysbus_mmio_get_region(busdev, 0));
+    sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 34));
+
+    // Connect SD card presence (3rd pin of gpio0) with SDIO controller
+    qdev_connect_gpio_out_named(DEVICE(&s->sdio), "card-inserted", 0,
+                          qemu_allocate_irq(mt174_sdio_card_inserted, s, 1));
+
+    dinfo = drive_get(IF_SD, 0, 0);
+    if (dinfo) {
+        DeviceState *card;
+
+        card = qdev_new(TYPE_SD_CARD);
+        qdev_prop_set_drive_err(card, "drive", blk_by_legacy_dinfo(dinfo),
+                                &error_fatal);
+        qdev_prop_set_uint8(card, "spec_version", SD_PHY_SPECv3_01_VERS);
+        qdev_realize_and_unref(card, qdev_get_child_bus(DEVICE(&s->sdio), "sd-bus"),
+                               &error_fatal);
+    }
 
     MemoryRegion *mko1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(mko1, NULL, "mko1", 0x1000, &error_fatal);
+    memory_region_init_ram(mko1, NULL, "mko1", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0030000, mko1);
 
     MemoryRegion *mko3 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(mko3, NULL, "mko3", 0x1000, &error_fatal);
+    memory_region_init_ram(mko3, NULL, "mko3", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0031000, mko3);
 
-    MemoryRegion *gpio1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(gpio1, NULL, "gpio1", 0x1000, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c0038000, gpio1);
+    s->gpio[1] = sysbus_create_simple("pl061", 0x20c0038000, NULL);
 
     if (serial_hd(1)) {
         object_initialize_child(OBJECT(s), "uart1", &s->uart[0], TYPE_PL011);
@@ -357,75 +440,83 @@ static void mt174_init(MachineState *machine)
         busdev = SYS_BUS_DEVICE(&s->uart[0]);
         memory_region_add_subregion(get_system_memory(), 0x20c0039000,
                                     sysbus_mmio_get_region(busdev, 0));
-        // sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 101));
+        sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 37));
     }
 
-    MemoryRegion *eth1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(eth1, NULL, "eth1", 0x1000, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c003a000, eth1);
+    object_initialize_child(OBJECT(s), "eth1", &s->greth[1], TYPE_GRETH);
+    greth_change_address_space(&s->greth[1], axi_addr_space, &error_fatal);
+    sysbus_realize(SYS_BUS_DEVICE(&s->greth[1]), &error_fatal);
+    busdev = SYS_BUS_DEVICE(&s->greth[1]);
+    memory_region_add_subregion(get_system_memory(), 0x20c003a000,
+                                sysbus_mmio_get_region(busdev, 0));
+    sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 53));
 
     MemoryRegion *spi1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(spi1, NULL, "spi1", 0x1000, &error_fatal);
+    memory_region_init_ram(spi1, NULL, "spi1", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c003b000, spi1);
 
     MemoryRegion *sdio1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(sdio1, NULL, "sdio1", 0x1000, &error_fatal);
+    memory_region_init_ram(sdio1, NULL, "sdio1", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c003c000, sdio1);
 
     MemoryRegion *IM2 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(IM2, NULL, "IM2", 0x20000, &error_fatal);
+    memory_region_init_ram(IM2, NULL, "IM2", 128 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0040000, IM2);
 
+    MemoryRegion *IM2_on_AXI = g_new(MemoryRegion, 1);
+    memory_region_init_alias(IM2_on_AXI, NULL, "IM2_on_AXI", IM2, 0, 128 * KiB);
+    memory_region_add_subregion(axi_mem, 0xc0040000, IM2_on_AXI);
+
     MemoryRegion *IM3 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(IM3, NULL, "IM3", 0x20000, &error_fatal);
+    memory_region_init_ram(IM3, NULL, "IM3", 128 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0060000, IM3);
 
     MemoryRegion *switch_axi32l = g_new(MemoryRegion, 1);
-    memory_region_init_ram(switch_axi32l, NULL, "switch_axi32l", 0x100000, &error_fatal);
+    memory_region_init_ram(switch_axi32l, NULL, "switch_axi32l", 1 * MiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0100000, switch_axi32l);
 
     MemoryRegion *switch_axi32r = g_new(MemoryRegion, 1);
-    memory_region_init_ram(switch_axi32r, NULL, "switch_axi32r", 0x100000, &error_fatal);
+    memory_region_init_ram(switch_axi32r, NULL, "switch_axi32r", 1 * MiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0200000, switch_axi32r);
 
     MemoryRegion *spacewire0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(spacewire0, NULL, "spacewire0", 0x1000, &error_fatal);
+    memory_region_init_ram(spacewire0, NULL, "spacewire0", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0300000, spacewire0);
 
     MemoryRegion *spacewire1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(spacewire1, NULL, "spacewire1", 0x1000, &error_fatal);
+    memory_region_init_ram(spacewire1, NULL, "spacewire1", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0301000, spacewire1);
 
     MemoryRegion *spacewire2 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(spacewire2, NULL, "spacewire2", 0x1000, &error_fatal);
+    memory_region_init_ram(spacewire2, NULL, "spacewire2", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0302000, spacewire2);
 
     MemoryRegion *spacewire3 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(spacewire3, NULL, "spacewire3", 0x1000, &error_fatal);
+    memory_region_init_ram(spacewire3, NULL, "spacewire3", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0303000, spacewire3);
 
     MemoryRegion *COM0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(COM0, NULL, "COM0", 0x1000, &error_fatal);
+    memory_region_init_ram(COM0, NULL, "COM0", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0304000, COM0);
 
     MemoryRegion *COM1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(COM1, NULL, "COM1", 0x1000, &error_fatal);
+    memory_region_init_ram(COM1, NULL, "COM1", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0305000, COM1);
 
     MemoryRegion *AXI_DMA = g_new(MemoryRegion, 1);
-    memory_region_init_ram(AXI_DMA, NULL, "AXI_DMA", 0x1000, &error_fatal);
+    memory_region_init_ram(AXI_DMA, NULL, "AXI_DMA", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0306000, AXI_DMA);
 
     MemoryRegion *SCRB = g_new(MemoryRegion, 1);
-    memory_region_init_ram(SCRB, NULL, "SCRB", 0x1000, &error_fatal);
+    memory_region_init_ram(SCRB, NULL, "SCRB", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0307000, SCRB);
 
     MemoryRegion *switch_axi64 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(switch_axi64, NULL, "switch_axi64", 0x100000, &error_fatal);
+    memory_region_init_ram(switch_axi64, NULL, "switch_axi64", 1 * MiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0400000, switch_axi64);
 
     MemoryRegion *rom_alias = g_new(MemoryRegion, 1);
-    memory_region_init_alias(rom_alias, NULL, "rom_alias", rom, 0, 0x10000);
+    memory_region_init_alias(rom_alias, NULL, "rom_alias", rom, 0, 64 * KiB);
     memory_region_add_subregion(get_system_memory(), 0x3ffffff0000, rom_alias);
 
 
@@ -441,8 +532,8 @@ static void mt174_reset(MachineState *machine, ShutdownCause reason)
 
     // FIXME: не надо ли как-то по-другому помещать прошивку в память?
     {
-        uint32_t file_size = 64*KiB;
-        uint8_t data[64*KiB];
+        uint32_t file_size = 64 * KiB;
+        uint8_t data[64 * KiB];
         int fd = open(machine->firmware, O_RDONLY);
 
         if (fd == -1) {

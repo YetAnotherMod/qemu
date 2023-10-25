@@ -175,3 +175,6 @@ config MT174
     bool
     default y
     select PL011 # UART
+    select PL061 # GPIO
+    select GRETH
+    select PFLASH_CFI02
