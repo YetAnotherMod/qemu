@@ -326,6 +326,31 @@ static void mt174_init(MachineState *machine)
     memory_region_init_alias(EMI_on_AXI, NULL, "EMI_on_AXI", EMI, 0, 0x80000000);
     memory_region_add_subregion(axi_mem, 0x0, EMI_on_AXI);
 
+    DriveInfo *dinfo = drive_get(IF_PFLASH, 0, 0);
+    if (dinfo) {
+        DeviceState *pflash = qdev_new("cfi.pflash02");
+
+        qdev_prop_set_drive(pflash, "drive", blk_by_legacy_dinfo(dinfo));
+
+        qdev_prop_set_uint32(pflash, "num-blocks", 512);
+        qdev_prop_set_uint32(pflash, "sector-length", 256 * KiB);
+
+        qdev_prop_set_uint8(pflash, "width", 4);
+        qdev_prop_set_uint8(pflash, "mappings", 1);
+        qdev_prop_set_uint8(pflash, "big-endian", 0);
+        qdev_prop_set_uint16(pflash, "id0", 0x0001);
+        qdev_prop_set_uint16(pflash, "id1", 0x0000);
+        qdev_prop_set_uint16(pflash, "id2", 0x0003);
+        qdev_prop_set_uint16(pflash, "id3", 0x0001);
+        qdev_prop_set_uint16(pflash, "unlock-addr0", 0x0AAA);
+        qdev_prop_set_uint16(pflash, "unlock-addr1", 0x0555);
+        qdev_prop_set_string(pflash, "name", "nor_flash");
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(pflash), &error_fatal);
+
+        MemoryRegion *pflash_region = sysbus_mmio_get_region(SYS_BUS_DEVICE(pflash), 0);
+        memory_region_add_subregion_overlap(EMI, 0x70000000, pflash_region, 1);
+    }
+
     MemoryRegion *IM0 = g_new(MemoryRegion, 1);
     memory_region_init_ram(IM0, NULL, "IM0", 0x20000, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x1080000000, IM0);
