@@ -1368,7 +1368,7 @@ target_ulong helper_476_tlbre(CPUPPCState *env, uint32_t word,
         if (tlb->prot & PAGE_VALID) {
             ret |= PPC476_TLB_VALID_BIT;
         }
-        if (tlb->attr & 0x1) {
+        if (tlb->attr & PPC476_TLB_TS) {
             ret |= PPC476_TLB_TS_BIT;
         }
         ret |= calc_476_page_size_to_tlb(tlb->size) << PPC476_TLB_PAGE_SIZE_SHIFT;

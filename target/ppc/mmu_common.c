@@ -747,7 +747,7 @@ static int mmu476fp_check_tlb(CPUPPCState *env, ppcemb_tlb_t *tlb,
     /* Check the address space */
     if ((access_type == MMU_INST_FETCH ?
         FIELD_EX64(env->msr, MSR, IR) :
-        FIELD_EX64(env->msr, MSR, DR)) != (tlb->attr & 1)) {
+        FIELD_EX64(env->msr, MSR, DR)) != (tlb->attr & PPC476_TLB_TS)) {
         qemu_log_mask(CPU_LOG_MMU, "%s: AS doesn't match\n", __func__);
         return -1;
     }
