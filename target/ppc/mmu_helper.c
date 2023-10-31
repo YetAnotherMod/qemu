@@ -1006,6 +1006,7 @@ target_ulong helper_440_tlbsx(CPUPPCState *env, target_ulong address)
 #define PPC476_TLB_ACCESS_PARAMS        0x3ff80
 
 #define PPC476_MMUCR_STID_MASK          0xffff
+#define PPC476_MMUCR_TS_MASK            0x10000
 #define PPC476_MMUCR_LINDEX_MASK        0x1fe0000
 #define PPC476_MMUCR_LINDEX_SHIFT       17
 #define PPC476_MMUCR_LVALID_MASK        0x10000000
@@ -1025,7 +1026,7 @@ target_ulong helper_440_tlbsx(CPUPPCState *env, target_ulong address)
 #define PPC476_BOLTED_ENTRY_COUNT       6
 
 static int ppc476_tlb_search(CPUPPCState *env, target_ulong address,
-                             uint32_t pid)
+                             uint32_t pid, uint32_t ts)
 {
     ppcemb_tlb_t *tlb;
     hwaddr raddr;
@@ -1035,7 +1036,8 @@ static int ppc476_tlb_search(CPUPPCState *env, target_ulong address,
     ret = -1;
     for (i = 0; i < env->nb_tlb; i++) {
         tlb = &env->tlb.tlbe[i];
-        if (ppc476fp_tlb_check(env, tlb, &raddr, address, pid, i) == 0) {
+        if (ppc476fp_tlb_check(env, tlb, &raddr, address, pid, i) == 0 &&
+            (tlb->attr & PPC476_TLB_TS) == ts) {
             ret = i;
             break;
         }
@@ -1410,8 +1412,9 @@ target_ulong helper_476_tlbre(CPUPPCState *env, uint32_t word,
 
 target_ulong helper_476_tlbsx(CPUPPCState *env, target_ulong address)
 {
-    target_ulong entry = ppc476_tlb_search(env, address,
-        env->spr[SPR_440_MMUCR] & PPC476_MMUCR_STID_MASK);
+    target_ulong entry =
+        ppc476_tlb_search(env, address, env->spr[SPR_440_MMUCR] & PPC476_MMUCR_STID_MASK,
+                          !!(env->spr[SPR_440_MMUCR] & PPC476_MMUCR_TS_MASK));
 
     uint32_t way;
     target_ulong result = get_476_tlb_index_and_way(entry, env->tlb_per_way, &way);
