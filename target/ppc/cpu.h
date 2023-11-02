@@ -1468,8 +1468,10 @@ int ppcmas_tlb_check(CPUPPCState *env, ppcmas_tlb_t *tlb, hwaddr *raddrp,
                      target_ulong address, uint32_t pid);
 int ppcemb_tlb_search(CPUPPCState *env, target_ulong address, uint32_t pid);
 hwaddr booke206_tlb_to_page_size(CPUPPCState *env, ppcmas_tlb_t *tlb);
-int ppc476fp_tlb_check(CPUPPCState *env, ppcemb_tlb_t *tlb, hwaddr *raddrp,
-                       target_ulong address, uint32_t pid, int i);
+int ppc476_tlb_page_check(CPUPPCState *env, ppcemb_tlb_t *tlb, target_ulong address,
+                          uint32_t pid, uint32_t ts);
+int ppc476_tlb_search(CPUPPCState *env, target_ulong address, uint32_t search_prio,
+                      uint32_t pid, uint32_t ts);
 #endif
 
 void ppc_store_fpscr(CPUPPCState *env, target_ulong val);

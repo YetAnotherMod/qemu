@@ -692,9 +692,8 @@ static int mmubooke_get_physical_address(CPUPPCState *env, mmu_ctx_t *ctx,
     return ret;
 }
 
-int ppc476fp_tlb_check(CPUPPCState *env, ppcemb_tlb_t *tlb,
-                            hwaddr *raddrp,
-                            target_ulong address, uint32_t pid, int i)
+int ppc476_tlb_page_check(CPUPPCState *env, ppcemb_tlb_t *tlb, target_ulong address,
+                          uint32_t pid, uint32_t ts)
 {
     uint64_t mask;
 
@@ -702,64 +701,69 @@ int ppc476fp_tlb_check(CPUPPCState *env, ppcemb_tlb_t *tlb,
     if (!(tlb->prot & PAGE_VALID)) {
         return -1;
     }
-    mask = ~((uint64_t)tlb->size - 1);
-    qemu_log_mask(CPU_LOG_MMU, "%s: TLB %d address " TARGET_FMT_lx " PID %u <=> "
-                  TARGET_FMT_lx " %" PRIx64 " %u %x\n", __func__, i, address,
-                  pid, tlb->EPN, mask, (uint32_t)tlb->PID, tlb->prot);
-    /* Check PID */
-    if (tlb->PID != 0 && tlb->PID != pid) {
+
+    /* check TS bit */
+    if ((tlb->attr & PPC476_TLB_TS) != ts) {
         return -1;
     }
+
+    mask = ~((uint64_t)tlb->size - 1);
+    qemu_log_mask(CPU_LOG_MMU, "%s: TLB address " TARGET_FMT_lx " PID %u <=> "
+                  TARGET_FMT_lx " %" PRIx64 " %u %x\n", __func__, address,
+                  pid, tlb->EPN, mask, (uint32_t)tlb->PID, tlb->prot);
+
+    /* Check PID */
+    if (tlb->PID != pid) {
+        return -1;
+    }
+
     /* Check effective address */
     if ((address & mask) != tlb->EPN) {
         return -1;
     }
-    *raddrp = address & ~mask;
-    *raddrp |= tlb->RPN;
 
     return 0;
 }
 
-static int mmu476fp_check_tlb(CPUPPCState *env, ppcemb_tlb_t *tlb,
-                              hwaddr *raddr, int *prot, target_ulong address,
-                              MMUAccessType access_type, int i)
+static int mmu476_tlb_check_prot(CPUPPCState *env, ppcemb_tlb_t *tlb, int *prot,
+                                 MMUAccessType access_type)
 {
     int prot2;
 
-    if (!(ppc476fp_tlb_check(env, tlb, raddr, address,
-                         env->spr[SPR_BOOKE_PID], i) >= 0)) {
-        qemu_log_mask(CPU_LOG_MMU, "%s: TLB entry not found\n", __func__);
-        return -1;
-    }
-
-    // check Problem state bit of MSR
+    /* check Problem state bit of MSR */
     if (FIELD_EX64(env->msr, MSR, PR)) {
         prot2 = tlb->prot & 0xF;
     } else {
         prot2 = (tlb->prot >> 4) & 0xF;
     }
 
-    // check little-endian bit
+    if (!(prot2 & prot_for_access_type(access_type))) {
+        qemu_log_mask(CPU_LOG_MMU, "%s: no prot match: %x\n", __func__, prot2);
+        return access_type == MMU_INST_FETCH ? -3 : -2;
+    }
+
+    /* check little-endian bit */
     if (tlb->attr & PPC476_TLB_LE) {
         prot2 |= PAGE_LE;
     }
 
-    /* Check the address space */
-    if ((access_type == MMU_INST_FETCH ?
-        FIELD_EX64(env->msr, MSR, IR) :
-        FIELD_EX64(env->msr, MSR, DR)) != (tlb->attr & PPC476_TLB_TS)) {
-        qemu_log_mask(CPU_LOG_MMU, "%s: AS doesn't match\n", __func__);
-        return -1;
-    }
-
     *prot = prot2;
-    if (prot2 & prot_for_access_type(access_type)) {
-        qemu_log_mask(CPU_LOG_MMU, "%s: good TLB!\n", __func__);
-        return 0;
-    }
 
-    qemu_log_mask(CPU_LOG_MMU, "%s: no prot match: %x\n", __func__, prot2);
-    return access_type == MMU_INST_FETCH ? -3 : -2;
+    qemu_log_mask(CPU_LOG_MMU, "%s: good TLB!\n", __func__);
+    return 0;
+}
+
+static inline hwaddr mmu476_calc_real_address(ppcemb_tlb_t *tlb, target_ulong address)
+{
+    hwaddr raddr;
+    uint64_t mask;
+
+    mask = ~((uint64_t)tlb->size - 1);
+
+    raddr = address & ~mask;
+    raddr |= tlb->RPN;
+
+    return raddr;
 }
 
 static int mmu476fp_get_physical_address(CPUPPCState *env, mmu_ctx_t *ctx,
@@ -775,15 +779,22 @@ static int mmu476fp_get_physical_address(CPUPPCState *env, mmu_ctx_t *ctx,
 
     /* Firstly search in corresponded shadow TLB */
     bool found_in_shadow_tlb = 0;
-    ppcemb_tlb_t *shadow_tlb =
-        access_type == MMU_INST_FETCH ? env->i_shadow_tlb : env->d_shadow_tlb;
-    int *shadow_tlb_size =
-        access_type == MMU_INST_FETCH ? &env->curr_i_shadow_tlb : &env->curr_d_shadow_tlb;
+    bool inst_fetch = (access_type == MMU_INST_FETCH);
+
+    ppcemb_tlb_t *shadow_tlb = inst_fetch ? env->i_shadow_tlb : env->d_shadow_tlb;
+    int *shadow_tlb_size = inst_fetch ? &env->curr_i_shadow_tlb : &env->curr_d_shadow_tlb;
+
+    uint32_t ts_bit = inst_fetch ? FIELD_EX64(env->msr, MSR, IR) :
+                                   FIELD_EX64(env->msr, MSR, DR);
 
     for (i = 0; i < *shadow_tlb_size; i++) {
-        ret = mmu476fp_check_tlb(env, shadow_tlb + i, &raddr, &ctx->prot, address,
-                                 access_type, i);
+        ret = ppc476_tlb_page_check(env, shadow_tlb + i, address,
+                                    env->spr[SPR_BOOKE_PID], ts_bit);
+
         if (ret != -1) {
+            // qemu_log_mask(CPU_LOG_MMU, "Page was found in shadow TLB\n", __func__);
+            raddr = mmu476_calc_real_address(shadow_tlb + i, address);
+            ret = mmu476_tlb_check_prot(env, shadow_tlb + i, &ctx->prot, access_type);
             found_in_shadow_tlb = 1;
             break;
         }
@@ -791,23 +802,26 @@ static int mmu476fp_get_physical_address(CPUPPCState *env, mmu_ctx_t *ctx,
 
     /* Search in main TLB if not found in shadow TLB */
     if (!found_in_shadow_tlb) {
-        for (i = 0; i < env->nb_tlb; i++) {
-            tlb = &env->tlb.tlbe[i];
-            ret = mmu476fp_check_tlb(env, tlb, &raddr, &ctx->prot, address,
-                                     access_type, i);
-            if (ret != -1) {
-                break;
-            }
+        uint32_t search_prio = FIELD_EX64(env->msr, MSR, PR) ? env->spr[SPR_USPCR] :
+                                                               env->spr[SPR_SSPCR];
+
+        ret = ppc476_tlb_search(env, address, search_prio, env->spr[SPR_BOOKE_PID],
+                                ts_bit);
+
+        if (ret != -1) {
+            // qemu_log_mask(CPU_LOG_MMU, "Page was found in main TLB\n", __func__);
+            tlb = &env->tlb.tlbe[ret];
+
+            raddr = mmu476_calc_real_address(tlb, address);
+            ret = mmu476_tlb_check_prot(env, tlb, &ctx->prot, access_type);
         }
     }
 
     if (ret >= 0) {
         /* Modify shadow tlb if found entry in main TLB */
         if (!found_in_shadow_tlb) {
-            int *shadow_tlb_last =
-                access_type == MMU_INST_FETCH ?
-                &env->last_i_shadow_tlb :
-                &env->last_d_shadow_tlb;
+            int *shadow_tlb_last = inst_fetch ? &env->last_i_shadow_tlb :
+                                                &env->last_d_shadow_tlb;
 
             memcpy(&shadow_tlb[*shadow_tlb_last], tlb, sizeof(ppcemb_tlb_t));
             *shadow_tlb_last = (*shadow_tlb_last + 1) % 8;
