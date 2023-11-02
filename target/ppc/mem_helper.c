@@ -88,13 +88,12 @@ void helper_lmw(CPUPPCState *env, target_ulong addr, uint32_t reg)
     void *host;
     int flags;
 
-    flags = probe_access_flags(env, addr, 0, MMU_DATA_LOAD, mmu_idx,
-                               true, &host, raddr);
-
-    assert(flags != TLB_INVALID_MASK);
-
     host = probe_contiguous(env, addr, (32 - reg) * 4,
                             MMU_DATA_LOAD, mmu_idx, raddr);
+
+    flags = probe_access_full_mmu(env, addr, 0, MMU_DATA_LOAD, mmu_idx, NULL, NULL);
+
+    assert(flags != TLB_INVALID_MASK);
 
     if (likely(host)) {
         /* Fast path -- the entire operation is in RAM at host.  */
@@ -122,13 +121,12 @@ void helper_stmw(CPUPPCState *env, target_ulong addr, uint32_t reg)
     void *host;
     int flags;
 
-    flags = probe_access_flags(env, addr, 0, MMU_DATA_STORE, mmu_idx,
-                               true, &host, raddr);
-
-    assert(flags != TLB_INVALID_MASK);
-
     host = probe_contiguous(env, addr, (32 - reg) * 4,
                             MMU_DATA_STORE, mmu_idx, raddr);
+
+    flags = probe_access_full_mmu(env, addr, 0, MMU_DATA_STORE, mmu_idx, NULL, NULL);
+
+    assert(flags != TLB_INVALID_MASK);
 
     if (likely(host)) {
         /* Fast path -- the entire operation is in RAM at host.  */
