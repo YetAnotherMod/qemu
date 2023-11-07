@@ -277,7 +277,7 @@ static void create_initial_mapping(CPUPPCState *env)
     ppcemb_tlb_t *tlb = &env->tlb.tlbe[0xf0 + 3 * env->tlb_per_way];
 
     tlb->attr = 0;
-    tlb->prot = PAGE_VALID | ((PAGE_READ | PAGE_WRITE | PAGE_EXEC) << 4);
+    tlb->prot = PAGE_VALID | ((PAGE_READ | PAGE_EXEC) << 4);
     tlb->size = 4 * KiB;
     tlb->EPN = 0xfffff000 & TARGET_PAGE_MASK;
     tlb->RPN = 0x3fffffff000;
