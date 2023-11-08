@@ -1481,6 +1481,8 @@ void helper_476_shadow_tlb_flush(CPUPPCState *env)
     env->curr_i_shadow_tlb = 0;
     env->last_d_shadow_tlb = 0;
     env->last_i_shadow_tlb = 0;
+
+    tlb_flush(env_cpu(env));
 }
 
 /* PowerPC BookE 2.06 TLB management */
