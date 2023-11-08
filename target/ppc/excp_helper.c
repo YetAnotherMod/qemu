@@ -2660,6 +2660,8 @@ void helper_store_msr(CPUPPCState *env, target_ulong val)
         cpu_interrupt_exittb(env_cpu(env));
         raise_exception(env, excp);
     }
+
+    helper_476_shadow_tlb_flush(env);
 }
 
 void helper_ppc_maybe_interrupt(CPUPPCState *env)
