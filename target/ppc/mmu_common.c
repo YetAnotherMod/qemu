@@ -788,13 +788,17 @@ static int mmu476fp_get_physical_address(CPUPPCState *env, mmu_ctx_t *ctx,
                                    FIELD_EX64(env->msr, MSR, DR);
 
     for (i = 0; i < *shadow_tlb_size; i++) {
-        ret = ppc476_tlb_page_check(env, shadow_tlb + i, address,
-                                    env->spr[SPR_BOOKE_PID], ts_bit);
+        tlb = shadow_tlb + i;
 
+        /*
+         * It looks like pid comparison is not needed for shadow tlb,
+         * so we use pid of page to make it pass.
+         */
+        ret = ppc476_tlb_page_check(env, tlb, address, tlb->PID, ts_bit);
         if (ret != -1) {
             // qemu_log_mask(CPU_LOG_MMU, "Page was found in shadow TLB\n", __func__);
-            raddr = mmu476_calc_real_address(shadow_tlb + i, address);
-            ret = mmu476_tlb_check_prot(env, shadow_tlb + i, &ctx->prot, access_type);
+            raddr = mmu476_calc_real_address(tlb, address);
+            ret = mmu476_tlb_check_prot(env, tlb, &ctx->prot, access_type);
             found_in_shadow_tlb = 1;
             break;
         }
