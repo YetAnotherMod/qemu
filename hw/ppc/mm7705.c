@@ -498,6 +498,10 @@ static void mm7705_init(MachineState *machine)
         };
 
         object_initialize_child(OBJECT(s), "eth0", &s->greth[0], TYPE_GRETH);
+        // if (nd_table[1].used) {
+        //  qemu_check_nic_model(&nd_table[1], TYPE_GRETH);
+        //  qdev_set_nic_properties(DEVICE(&s->greth[0]), &nd_table[1]);
+        // }
         greth_change_address_space(&s->greth[0], axi_addr_space, &error_fatal);
         qdev_prop_set_macaddr(DEVICE(&s->greth[0]), "edcl_mac", edcl_mac[0]);
         /* set ip 192.168.1.2 as one number */
@@ -508,6 +512,10 @@ static void mm7705_init(MachineState *machine)
                                     sysbus_mmio_get_region(busdev, 0));
 
         object_initialize_child(OBJECT(s), "eth1", &s->greth[1], TYPE_GRETH);
+        // if (nd_table[0].used) {
+        //     qemu_check_nic_model(&nd_table[0], TYPE_GRETH);
+        //     qdev_set_nic_properties(DEVICE(&s->greth[1]), &nd_table[0]);
+        // }
         greth_change_address_space(&s->greth[1], axi_addr_space, &error_fatal);
         qdev_prop_set_macaddr(DEVICE(&s->greth[1]), "edcl_mac", edcl_mac[1]);
         /* set ip 192.168.1.3 as one number */
@@ -518,9 +526,9 @@ static void mm7705_init(MachineState *machine)
                                     sysbus_mmio_get_region(busdev, 0));
 
         object_initialize_child(OBJECT(s), "eth2", &s->greth[2], TYPE_GRETH);
-        // if (nd_table[0].used) {
-        //     qemu_check_nic_model(&nd_table[0], TYPE_GRETH);
-        //     qdev_set_nic_properties(DEVICE(&s->greth[2]), &nd_table[0]);
+        // if (nd_table[2].used) {
+        //     qemu_check_nic_model(&nd_table[2], TYPE_GRETH);
+        //     qdev_set_nic_properties(DEVICE(&s->greth[2]), &nd_table[2]);
         // }
         greth_change_address_space(&s->greth[2], axi_addr_space, &error_fatal);
         qdev_prop_set_macaddr(DEVICE(&s->greth[2]), "edcl_mac", edcl_mac[2]);
@@ -532,6 +540,10 @@ static void mm7705_init(MachineState *machine)
                                     sysbus_mmio_get_region(busdev, 0));
 
         object_initialize_child(OBJECT(s), "gbit_eth0", &s->gb_greth[0], TYPE_GRETH);
+        if (nd_table[1].used) {
+            qemu_check_nic_model(&nd_table[1], TYPE_GRETH);
+            qdev_set_nic_properties(DEVICE(&s->gb_greth[0]), &nd_table[1]);
+        }
         greth_change_address_space(&s->gb_greth[0], axi_addr_space, &error_fatal);
         qdev_prop_set_macaddr(DEVICE(&s->gb_greth[0]), "edcl_mac", edcl_mac[3]);
         /* set ip 192.168.1.49 as one number */
