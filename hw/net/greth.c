@@ -20,8 +20,12 @@
 #define REG_MDIO            0x10
 #define REG_SEND_DESCR_PTR  0x14
 #define REG_RECV_DESCR_PTR  0x18
+#define REG_IP_EDCL         0x1C
+#define REG_MAC_MSB_EDCL    0x28
+#define REG_MAC_LSB_EDCL    0x2C
 
-#define CONTROL_MULTICAST_EN    0x800
+#define CONTROL_EDCL_DISABLE    0x4000U
+#define CONTROL_MULTICAST_EN    0x800U
 #define CONTROL_SPEED           0x80
 #define CONTROL_RESET           0x40
 #define CONTROL_PROMISCUOUS     0x20
@@ -33,7 +37,7 @@
 
 #define CONTROL_MASK \
     (CONTROL_MULTICAST_EN | CONTROL_SPEED | CONTROL_PROMISCUOUS | CONTROL_FULL_DUPLEX | \
-    CONTROL_RECV_IRQ_EN | CONTROL_SEND_IRQ_EN | CONTROL_RECV_EN |CONTROL_SEND_EN )
+    CONTROL_RECV_IRQ_EN | CONTROL_SEND_IRQ_EN | CONTROL_RECV_EN | CONTROL_SEND_EN)
 
 #define STATUS_INVALID_ADDR     0x80
 #define STATUS_TOO_SMALL        0x40
@@ -64,6 +68,54 @@
 #define DESCR_PTR_BASE_MASK     0xfffffc00
 #define DESCR_PTR_OFFSET_MASK   0x3fc
 #define DESCR_PTR_INCREMENT     0x8
+
+#define IP_ADDR_LEN             4
+#define ARP_ETH_HW_TYPE         1
+#define ARP_ANSWER_OPCODE       2
+
+/* edcl header parts */
+#define EDCL_IP_VER_LEN                 0x45
+#define EDCL_GET_SEQUNCENUM(hdr)        ((hdr) >> 18U)
+#define EDCL_IS_WR(hdr)                 (1U & ((hdr) >> 17U))
+#define EDCL_GET_LENGTH(hdr)            (0x3FFU & ((hdr) >> 7U))
+#define EDCL_SET_WR_NACK                (1U << 17U)
+#define EDCL_SET_SEQUNCENUM(sn)         ((sn) << 18U)
+#define EDCL_SET_LENGTH_NULL            (~0x1FF80U)
+#define EDCL_SET_SEQUNCENUM_NULL        (~0xFFFC0000U)
+
+#define EDCL_HEADER_OFFSET_LEN          sizeof(uint16_t)
+#define EDCL_HEADER_LEN                 sizeof(uint32_t)
+#define EDCL_ADDR_LEN                   sizeof(uint32_t)
+
+#define EDCL_MIN_PACKET_LENGTH \
+    sizeof(struct eth_header) + sizeof(struct ip_header) + sizeof(struct udp_header) + \
+    EDCL_HEADER_OFFSET_LEN + EDCL_HEADER_LEN + EDCL_ADDR_LEN
+
+#define PKT_EDCL_GET_CURRENT_LEN(p)    \
+    (EDCL_MIN_PACKET_LENGTH + EDCL_GET_LENGTH(p))
+#define PKT_EDCL_GET_ARP_HDR(p)       \
+    ((arp_hdr_t *) (((uint8_t *)(p)) + sizeof(struct eth_header)))
+#define PKT_EDCL_GET_UDP_HDR(p)       \
+    ((udp_header *) ((uint8_t *)(PKT_EDCL_GET_ARP_HDR(p)) + sizeof(struct ip_header)))
+#define PKT_EDCL_GET_EDCL_HDR(p)       \
+    ((uint32_t *) ((uint8_t *)(PKT_EDCL_GET_UDP_HDR(p)) + sizeof(struct udp_header) + \
+                               EDCL_HEADER_OFFSET_LEN))
+#define PKT_EDCL_GET_ADDR(p)       \
+    ((uint32_t *) ((uint8_t *)(PKT_EDCL_GET_EDCL_HDR(p)) + EDCL_HEADER_LEN))
+#define PKT_EDCL_GET_DATA(p)       \
+    ((uint32_t *) ((uint8_t *)(PKT_EDCL_GET_ADDR(p)) + EDCL_ADDR_LEN))
+
+typedef struct {
+    uint16_t htype;
+    uint16_t ptype;
+    uint8_t hlen;
+    uint8_t plen;
+    uint16_t opcode;
+    uint8_t sender_mac[ETH_ALEN];
+    uint8_t sender_ip[IP_ADDR_LEN];
+    uint8_t target_mac[ETH_ALEN];
+    uint8_t target_ip[IP_ADDR_LEN];
+} arp_hdr_t;
 
 /* DMA logic */
 typedef struct {
@@ -216,61 +268,237 @@ static uint16_t greth_phy_read(GRETHState *s, uint32_t regaddr)
 // needed to generate irqs
 static void greth_update_irq(GRETHState *s);
 
-static bool greth_can_receive(NetClientState *nc)
+static int arp_accept_and_respond(GRETHState *s, const uint8_t *buf)
+{
+    const struct eth_header *mac_receive = PKT_GET_ETH_HDR(buf);
+    const arp_hdr_t *arp_data = PKT_EDCL_GET_ARP_HDR(buf);
+
+    struct eth_header send_header = {
+        .h_proto = htons(ETH_P_ARP),
+    };
+
+    arp_hdr_t send_data = {
+        .htype = htons(ARP_ETH_HW_TYPE),
+        .ptype = htons(ETH_P_IP),
+        .hlen = ETH_ALEN,
+        .plen = IP_ADDR_LEN,
+        .opcode = htons(ARP_ANSWER_OPCODE)
+    };
+
+    memcpy(send_header.h_dest, mac_receive->h_source, ETH_ALEN);
+    memcpy(send_header.h_source, s->edcl_mac.a, ETH_ALEN);
+    memcpy(send_data.sender_mac, s->edcl_mac.a, ETH_ALEN);
+    memcpy(send_data.sender_ip, arp_data->target_ip, IP_ADDR_LEN);
+    memcpy(send_data.target_mac, mac_receive->h_source, ETH_ALEN);
+    memcpy(send_data.target_ip, arp_data->sender_ip, IP_ADDR_LEN);
+
+    uint8_t padded_buf[ETH_ZLEN];
+
+    memcpy(padded_buf, &send_header, sizeof(struct eth_header));
+    memcpy(padded_buf + sizeof(struct eth_header), &send_data, sizeof(arp_hdr_t));
+
+    qemu_send_packet(qemu_get_queue(s->nic), padded_buf, ETH_ZLEN);
+
+    return 1;
+}
+
+static int edcl_accept_and_respond(GRETHState *s, const uint8_t *buf, size_t len)
+{
+    struct eth_header *mac_level = PKT_GET_ETH_HDR(buf);
+    struct ip_header *ip_level = PKT_GET_IP_HDR(buf);
+    struct udp_header *udp_level = PKT_EDCL_GET_UDP_HDR(buf);
+    uint32_t *recive_data = PKT_EDCL_GET_EDCL_HDR(buf);
+    uint32_t edcl_header = ntohl(*recive_data);
+
+    if (ntohs(mac_level->h_proto) != ETH_P_IP) {
+        return -1;
+    }
+
+    if (ntohl(ip_level->ip_dst) != s->edcl_ip) {
+        return -1;
+    }
+
+    if (ip_level->ip_ver_len != EDCL_IP_VER_LEN) {
+        return -1;
+    }
+
+    if (ip_level->ip_p != IP_PROTO_UDP) {
+        return -1;
+    }
+
+    memcpy(mac_level->h_dest, mac_level->h_source, ETH_ALEN);
+    memcpy(mac_level->h_source, s->edcl_mac.a, ETH_ALEN);
+    mac_level->h_proto = htons(ETH_P_IP);
+
+    ip_level->ip_dst = ip_level->ip_src;
+    ip_level->ip_src = htonl(s->edcl_ip);
+
+    udp_level->uh_dport = udp_level->uh_sport;
+
+    if (EDCL_GET_SEQUNCENUM(edcl_header) != s->edcl_sequnce_counter) {
+        edcl_header |= EDCL_SET_WR_NACK;
+        edcl_header &= EDCL_SET_SEQUNCENUM_NULL;
+        edcl_header |= EDCL_SET_SEQUNCENUM(s->edcl_sequnce_counter);
+        edcl_header &= EDCL_SET_LENGTH_NULL;
+
+        *recive_data = htonl(edcl_header);
+        qemu_send_packet(qemu_get_queue(s->nic), buf, len);
+        return -1;
+    }
+
+    const uint32_t *addr = PKT_EDCL_GET_ADDR(buf);
+    uint32_t *data = PKT_EDCL_GET_DATA(buf);
+
+    if (EDCL_IS_WR(edcl_header)) {
+        dma_memory_write(s->addr_space, ntohl(*addr), data, EDCL_GET_LENGTH(edcl_header),
+                         MEMTXATTRS_UNSPECIFIED);
+        edcl_header &= EDCL_SET_LENGTH_NULL;
+        *data = 0;
+    } else {
+        dma_memory_read(s->addr_space, ntohl(*addr), data, EDCL_GET_LENGTH(edcl_header),
+                        MEMTXATTRS_UNSPECIFIED);
+    }
+
+    size_t current_len = PKT_EDCL_GET_CURRENT_LEN(edcl_header);
+
+    if (current_len <= ETH_ZLEN) {
+        len = ETH_ZLEN;
+    } else {
+        len = current_len;
+    }
+
+    ip_level->ip_len = htons(current_len - sizeof(struct eth_header));
+    udp_level->uh_ulen = htons(current_len - sizeof(struct eth_header) -
+                               sizeof(struct ip_header));
+
+    edcl_header &= ~EDCL_SET_WR_NACK;
+    *recive_data = htonl(edcl_header);
+
+    qemu_send_packet(qemu_get_queue(s->nic), buf, len);
+    s->edcl_sequnce_counter++;
+
+    return 1;
+}
+
+enum receive_type {
+    CAN_RECEIVE_NONE = 0U,
+    CAN_RECEIVE_EDCL = 1U << 0,
+    CAN_RECEIVE_OTHER = 1U << 1,
+};
+
+static enum receive_type greth_can_receive_something(NetClientState *nc)
 {
     GRETHState *s = GRETH(qemu_get_nic_opaque(nc));
+    enum receive_type res = CAN_RECEIVE_NONE;
+
+    if(!(s->ctrl & CONTROL_EDCL_DISABLE)) {
+        res |= CAN_RECEIVE_EDCL;
+    }
 
     if (!(s->ctrl & CONTROL_RECV_EN)) {
-        return 0;
+        return res;
     }
 
     recv_desc_t desc;
     if (read_recv_desc(s, s->recv_desc, &desc)) {
         s->status |= STATUS_RECV_DMA_ERROR;
-        return 0;
+        return res;
     }
 
     if (!desc.enabled) {
-        return 0;
+        return res;
     }
 
-    return 1;
+    return res | CAN_RECEIVE_OTHER;
 }
 
-static int check_packet_type(GRETHState *s, const uint8_t *buf)
+static bool greth_can_receive(NetClientState *nc)
+{
+    return greth_can_receive_something(nc) ? 1 : 0;
+}
+
+enum packet_type {
+    PACKET_TYPE_EDCL_ARP,
+    PACKET_TYPE_EDCL,
+    PACKET_TYPE_OTHER,
+    PACKET_TYPE_ERR,
+};
+
+static enum packet_type check_packet_belong(GRETHState *s, const uint8_t *buf, size_t len)
 {
     eth_pkt_types_e pkt_type = get_eth_packet_type(PKT_GET_ETH_HDR(buf));
+    struct eth_header *mac_level = PKT_GET_ETH_HDR(buf);
+    arp_hdr_t *arp_data = PKT_EDCL_GET_ARP_HDR(buf);
 
     switch (pkt_type) {
+    case ETH_PKT_BCAST:
+        if (ntohs(mac_level->h_proto) != ETH_P_ARP) {
+            break;
+        }
+
+        uint32_t target_ip = *((uint32_t *)arp_data->target_ip);
+        if (ntohl(target_ip) == s->edcl_ip) {
+            return PACKET_TYPE_EDCL_ARP;
+        }
+        break;
+
     case ETH_PKT_MCAST:
         if (!(s->ctrl & CONTROL_MULTICAST_EN)) {
-            return -1;
+            return PACKET_TYPE_ERR;
         }
         break;
 
     case ETH_PKT_UCAST:
-        if (memcmp(buf, s->conf.macaddr.a, ETH_ALEN)) {
-            return -1;
+        if (memcmp(mac_level->h_dest, s->edcl_mac.a, ETH_ALEN) == 0) {
+            return PACKET_TYPE_EDCL;
         }
 
-    default: break;
+        if (memcmp(mac_level->h_dest, s->conf.macaddr.a, ETH_ALEN)) {
+            return PACKET_TYPE_ERR;
+        }
+        break;
+
+    default:
+        break;
     }
 
-    return 0;
+    return PACKET_TYPE_OTHER;
 }
 
 static ssize_t greth_receive(NetClientState *nc, const uint8_t *buf, size_t len)
 {
     GRETHState *s = GRETH(qemu_get_nic_opaque(nc));
-    recv_desc_t desc;
 
-    if (!greth_can_receive(nc)) {
+    const int can_receive = greth_can_receive_something(nc);
+
+    if (can_receive == CAN_RECEIVE_NONE) {
         return -1;
     }
 
-    if (check_packet_type(s, buf)) {
+    switch (check_packet_belong(s, buf, len)) {
+    case PACKET_TYPE_ERR:
+        return len;
+
+    case PACKET_TYPE_EDCL:
+        if (can_receive & CAN_RECEIVE_EDCL) {
+            return edcl_accept_and_respond(s, buf, len);
+        }
+        return len;
+
+    case PACKET_TYPE_EDCL_ARP:
+        if (can_receive & CAN_RECEIVE_EDCL) {
+            return arp_accept_and_respond(s, buf);
+        }
+        return len;
+
+    case PACKET_TYPE_OTHER:
+        if (can_receive & CAN_RECEIVE_OTHER) {
+            break;
+        }
         return len;
     }
+
+    recv_desc_t desc;
 
     if (read_recv_desc(s, s->recv_desc, &desc)) {
         s->status |= STATUS_RECV_DMA_ERROR;
@@ -408,6 +636,18 @@ static uint64_t greth_read(void *opaque, hwaddr offset, unsigned size)
         val = s->recv_desc;
         break;
 
+    case REG_IP_EDCL:
+        val = s->edcl_ip;
+        break;
+
+    case REG_MAC_MSB_EDCL:
+        val = s->edcl_mac_msb;
+        break;
+
+    case REG_MAC_LSB_EDCL:
+        val = s->edcl_mac_lsb;
+        break;
+
     default: break;
     }
 
@@ -489,6 +729,24 @@ static void greth_write(void *opaque, hwaddr offset, uint64_t val, unsigned size
         s->recv_desc = val & (DESCR_PTR_BASE_MASK | DESCR_PTR_OFFSET_MASK);
         break;
 
+    case REG_IP_EDCL:
+        s->edcl_ip = val;
+        break;
+
+    case REG_MAC_MSB_EDCL:
+        s->edcl_mac_msb = val;
+        s->edcl_mac.a[0] = val >> 8U;
+        s->edcl_mac.a[1] = val >> 0U;
+        break;
+
+    case REG_MAC_LSB_EDCL:
+        s->edcl_mac_lsb = val;
+        s->edcl_mac.a[2] = val >> 24U;
+        s->edcl_mac.a[3] = val >> 16U;
+        s->edcl_mac.a[4] = val >> 8U;
+        s->edcl_mac.a[5] = val >> 0U;
+        break;
+
     default: break;
     }
 }
@@ -506,6 +764,7 @@ static void greth_reset(DeviceState *dev)
     s->send_desc = 0;
     s->recv_desc = 0;
     s->mdio = MDIO_LINKFAIL;
+    s->edcl_sequnce_counter = 0;
 }
 
 static const MemoryRegionOps greth_ops = {
@@ -534,6 +793,15 @@ static void greth_realize(DeviceState *dev, Error **errp)
     s->nic = qemu_new_nic(&net_greth_info, &s->conf,
                             object_get_typename(OBJECT(dev)), dev->id, s);
     qemu_format_nic_info_str(qemu_get_queue(s->nic), s->conf.macaddr.a);
+
+    s->edcl_mac.a[0] = 0xec;
+    s->edcl_mac.a[1] = 0x17;
+    s->edcl_mac.a[2] = 0x66;
+    s->edcl_mac.a[3] = 0x77;
+    s->edcl_mac.a[4] = 0x05;
+    s->edcl_mac.a[5] = 0x00;
+
+    s->edcl_ip = 0xc0a80130;
 
     // set default address space
     if (s->addr_space == NULL) {
