@@ -24,16 +24,22 @@
 #define REG_MAC_MSB_EDCL    0x28
 #define REG_MAC_LSB_EDCL    0x2C
 
+#define CONTROL_EDCL_AVAIL      0x80000000U
+#define CONTROL_EDCL_BUFF_2K    0x10000000U
+#define CONTROL_MULTICAST_AVAIL 0x1000000U
 #define CONTROL_EDCL_DISABLE    0x4000U
 #define CONTROL_MULTICAST_EN    0x800U
-#define CONTROL_SPEED           0x80
-#define CONTROL_RESET           0x40
-#define CONTROL_PROMISCUOUS     0x20
-#define CONTROL_FULL_DUPLEX     0x10
-#define CONTROL_RECV_IRQ_EN     0x8
-#define CONTROL_SEND_IRQ_EN     0x4
-#define CONTROL_RECV_EN         0x2
-#define CONTROL_SEND_EN         0x1
+#define CONTROL_SPEED           0x80U
+#define CONTROL_RESET           0x40U
+#define CONTROL_PROMISCUOUS     0x20U
+#define CONTROL_FULL_DUPLEX     0x10U
+#define CONTROL_RECV_IRQ_EN     0x8U
+#define CONTROL_SEND_IRQ_EN     0x4U
+#define CONTROL_RECV_EN         0x2U
+#define CONTROL_SEND_EN         0x1U
+
+#define CONTROL_RESET_VAL \
+    (CONTROL_EDCL_AVAIL | CONTROL_EDCL_BUFF_2K | CONTROL_MULTICAST_AVAIL | CONTROL_SPEED)
 
 #define CONTROL_MASK \
     (CONTROL_MULTICAST_EN | CONTROL_SPEED | CONTROL_PROMISCUOUS | CONTROL_FULL_DUPLEX | \
@@ -598,7 +604,7 @@ static void greth_update_irq(GRETHState *s)
 
 static void greth_soft_reset(GRETHState *s)
 {
-    s->ctrl = CONTROL_SPEED;
+    s->ctrl = CONTROL_RESET_VAL;
     s->status &= STATUS_MASK;
 }
 
