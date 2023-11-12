@@ -468,20 +468,24 @@ static void mm7705_init(MachineState *machine)
         sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 101));
     }
 
-    {
+    if (serial_hd(1)) {
         object_initialize_child(OBJECT(s), "uart1", &s->uart[1], TYPE_PL011);
-        // qdev_prop_set_chr(DEVICE(&s->uart[1]), "chardev", serial_hd(1));
+        qdev_prop_set_chr(DEVICE(&s->uart[1]), "chardev", serial_hd(1));
         sysbus_realize(SYS_BUS_DEVICE(&s->uart[1]), &error_fatal);
         busdev = SYS_BUS_DEVICE(&s->uart[1]);
         memory_region_add_subregion(get_system_memory(), 0x103c05e000,
                                     sysbus_mmio_get_region(busdev, 0));
+        sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 102));
+    }
 
+    if (serial_hd(2)) {
         object_initialize_child(OBJECT(s), "uart2", &s->uart[2], TYPE_PL011);
-        // qdev_prop_set_chr(DEVICE(&s->uart[2]), "chardev", serial_hd(2));
+        qdev_prop_set_chr(DEVICE(&s->uart[2]), "chardev", serial_hd(2));
         sysbus_realize(SYS_BUS_DEVICE(&s->uart[2]), &error_fatal);
         busdev = SYS_BUS_DEVICE(&s->uart[2]);
         memory_region_add_subregion(get_system_memory(), 0x103c05f000,
                                     sysbus_mmio_get_region(busdev, 0));
+        sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 65));
     }
 
     {
