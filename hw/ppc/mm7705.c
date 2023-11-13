@@ -480,8 +480,19 @@ static void mm7705_init(MachineState *machine)
     }
 
     {
+        uint8_t edcl_mac[5][6] = {
+            {0xec, 0x17, 0x66, 0x00, 0x00, 0x02},
+            {0xec, 0x17, 0x66, 0x00, 0x00, 0x03},
+            {0xec, 0x17, 0x66, 0x00, 0x00, 0x00},
+            {0xec, 0x17, 0x66, 0x77, 0x05, 0x01},
+            {0xec, 0x17, 0x66, 0x77, 0x05, 0x00},
+        };
+
         object_initialize_child(OBJECT(s), "eth0", &s->greth[0], TYPE_GRETH);
         greth_change_address_space(&s->greth[0], axi_addr_space, &error_fatal);
+        qdev_prop_set_macaddr(DEVICE(&s->greth[0]), "edcl_mac", edcl_mac[0]);
+        /* set ip 192.168.1.2 as one number */
+        qdev_prop_set_uint32(DEVICE(&s->greth[0]), "edcl_ip", 0xc0a80102);
         sysbus_realize(SYS_BUS_DEVICE(&s->greth[0]), &error_fatal);
         SysBusDevice *busdev = SYS_BUS_DEVICE(&s->greth[0]);
         memory_region_add_subregion(get_system_memory(), 0x103c035000,
@@ -489,6 +500,9 @@ static void mm7705_init(MachineState *machine)
 
         object_initialize_child(OBJECT(s), "eth1", &s->greth[1], TYPE_GRETH);
         greth_change_address_space(&s->greth[1], axi_addr_space, &error_fatal);
+        qdev_prop_set_macaddr(DEVICE(&s->greth[1]), "edcl_mac", edcl_mac[1]);
+        /* set ip 192.168.1.3 as one number */
+        qdev_prop_set_uint32(DEVICE(&s->greth[1]), "edcl_ip", 0xc0a80103);
         sysbus_realize(SYS_BUS_DEVICE(&s->greth[1]), &error_fatal);
         busdev = SYS_BUS_DEVICE(&s->greth[1]);
         memory_region_add_subregion(get_system_memory(), 0x103c036000,
@@ -500,6 +514,9 @@ static void mm7705_init(MachineState *machine)
         //     qdev_set_nic_properties(DEVICE(&s->greth[2]), &nd_table[0]);
         // }
         greth_change_address_space(&s->greth[2], axi_addr_space, &error_fatal);
+        qdev_prop_set_macaddr(DEVICE(&s->greth[2]), "edcl_mac", edcl_mac[2]);
+        /* set ip 192.168.1.0 as one number */
+        qdev_prop_set_uint32(DEVICE(&s->greth[2]), "edcl_ip", 0xc0a80100);
         sysbus_realize(SYS_BUS_DEVICE(&s->greth[2]), &error_fatal);
         busdev = SYS_BUS_DEVICE(&s->greth[2]);
         memory_region_add_subregion(get_system_memory(), 0x103c037000,
@@ -507,6 +524,9 @@ static void mm7705_init(MachineState *machine)
 
         object_initialize_child(OBJECT(s), "gbit_eth0", &s->gb_greth[0], TYPE_GRETH);
         greth_change_address_space(&s->gb_greth[0], axi_addr_space, &error_fatal);
+        qdev_prop_set_macaddr(DEVICE(&s->gb_greth[0]), "edcl_mac", edcl_mac[3]);
+        /* set ip 192.168.1.49 as one number */
+        qdev_prop_set_uint32(DEVICE(&s->gb_greth[0]), "edcl_ip", 0xc0a80131);
         sysbus_realize(SYS_BUS_DEVICE(&s->gb_greth[0]), &error_fatal);
         busdev = SYS_BUS_DEVICE(&s->gb_greth[0]);
         memory_region_add_subregion(get_system_memory(), 0x103c033000,
@@ -518,6 +538,9 @@ static void mm7705_init(MachineState *machine)
             qdev_set_nic_properties(DEVICE(&s->gb_greth[1]), &nd_table[0]);
         }
         greth_change_address_space(&s->gb_greth[1], axi_addr_space, &error_fatal);
+        qdev_prop_set_macaddr(DEVICE(&s->gb_greth[1]), "edcl_mac", edcl_mac[4]);
+        /* set ip 192.168.1.48 as one number */
+        qdev_prop_set_uint32(DEVICE(&s->gb_greth[1]), "edcl_ip", 0xc0a80130);
         sysbus_realize(SYS_BUS_DEVICE(&s->gb_greth[1]), &error_fatal);
         busdev = SYS_BUS_DEVICE(&s->gb_greth[1]);
         memory_region_add_subregion(get_system_memory(), 0x103c034000,
@@ -530,7 +553,7 @@ static void mm7705_init(MachineState *machine)
         for (int i = 0; i < ARRAY_SIZE(s->lsif0_mgpio); i++) {
             s->lsif0_mgpio[i] = sysbus_create_simple("pl061", 0x103c040000 + 0x1000*i, NULL);
         }
-        
+
         for (int i = 0; i < ARRAY_SIZE(s->lsif1_gpio); i++) {
             s->lsif1_gpio[i] = sysbus_create_simple("pl061", 0x103c065000 + 0x1000*i, NULL);
         }
