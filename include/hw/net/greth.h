@@ -14,6 +14,7 @@ struct GRETHState {
     /*< public >*/
     MemoryRegion iomem;
 
+    struct MACAddr edcl_mac;
     NICConf conf;
     NICState *nic;
 
@@ -24,8 +25,12 @@ struct GRETHState {
     uint32_t send_desc;
     uint32_t recv_desc;
     uint32_t mdio;
-
     uint16_t phy_ctrl;
+
+    uint32_t edcl_sequnce_counter;
+    uint32_t edcl_ip;
+    uint32_t edcl_mac_msb;
+    uint32_t edcl_mac_lsb;
 
     qemu_irq irq;
 };
