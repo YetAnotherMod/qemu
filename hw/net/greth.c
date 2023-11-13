@@ -799,16 +799,6 @@ static void greth_realize(DeviceState *dev, Error **errp)
     s->nic = qemu_new_nic(&net_greth_info, &s->conf,
                             object_get_typename(OBJECT(dev)), dev->id, s);
     qemu_format_nic_info_str(qemu_get_queue(s->nic), s->conf.macaddr.a);
-
-    s->edcl_mac.a[0] = 0xec;
-    s->edcl_mac.a[1] = 0x17;
-    s->edcl_mac.a[2] = 0x66;
-    s->edcl_mac.a[3] = 0x77;
-    s->edcl_mac.a[4] = 0x05;
-    s->edcl_mac.a[5] = 0x00;
-
-    s->edcl_ip = 0xc0a80130;
-
     // set default address space
     if (s->addr_space == NULL) {
         s->addr_space = &address_space_memory;
@@ -826,6 +816,8 @@ void greth_change_address_space(GRETHState *s, AddressSpace *addr_space, Error *
 
 static Property greth_properties[] = {
     DEFINE_NIC_PROPERTIES(GRETHState, conf),
+    DEFINE_PROP_MACADDR("edcl_mac", GRETHState, edcl_mac),
+    DEFINE_PROP_UINT32("edcl_ip", GRETHState, edcl_ip, 0),
     DEFINE_PROP_END_OF_LIST(),
 };
 
