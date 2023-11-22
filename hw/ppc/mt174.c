@@ -319,7 +319,7 @@ static void mt174_init(MachineState *machine)
     address_space_init(axi_addr_space, axi_mem, "axi_addr_space");
 
     MemoryRegion *EMI = g_new(MemoryRegion, 1);
-    memory_region_init_ram(EMI, NULL, "EMI", 8 * GiB, &error_fatal);
+    memory_region_init_ram(EMI, NULL, "EMI", 2 * GiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x0, EMI);
 
     MemoryRegion *EMI_on_AXI = g_new(MemoryRegion, 1);

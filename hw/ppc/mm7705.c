@@ -18,6 +18,7 @@
 #include "hw/irq.h"
 #include "exec/memory.h"
 #include "exec/address-spaces.h"
+#include "hw/misc/unimp.h"
 
 typedef struct {
     MachineState parent;
@@ -49,6 +50,8 @@ typedef struct {
     OBJECT_CHECK(MM7705MachineState, obj, TYPE_MM7705_MACHINE)
 
 #define MM7705_BOOT_CFG_DEFVAL 0x16
+
+#define MM7705_DDR_SLOTS_CNT 2
 
 /* DCR registers */
 static int dcr_read_error(int dcrn)
@@ -360,7 +363,8 @@ static void mm7705_init(MachineState *machine)
 
 
     MemoryRegion *EM0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(EM0, NULL, "EM0", 8 * GiB, &error_fatal);
+    memory_region_init_ram(EM0, NULL, "EM0", machine->ram_size / MM7705_DDR_SLOTS_CNT,
+                           &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x0, EM0);
 
     MemoryRegion *EM0_alias = g_new(MemoryRegion, 1);
@@ -368,7 +372,8 @@ static void mm7705_init(MachineState *machine)
     memory_region_add_subregion(axi_mem, 0x40000000, EM0_alias);
 
     MemoryRegion *EM1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(EM1, NULL, "EM1", 8 * GiB, &error_fatal);
+    memory_region_init_ram(EM1, NULL, "EM1", machine->ram_size / MM7705_DDR_SLOTS_CNT,
+                           &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x200000000, EM1);
 
     MemoryRegion *EM1_alias = g_new(MemoryRegion, 1);
@@ -376,11 +381,11 @@ static void mm7705_init(MachineState *machine)
     memory_region_add_subregion(axi_mem, 0x80000000, EM1_alias);
 
     MemoryRegion *EM2 = g_new(MemoryRegion, 1);
-    memory_region_init_alias(EM2, NULL, "EM2", EM0, 0, 8 * GiB);
+    memory_region_init_alias(EM2, NULL, "EM2", EM0, 0, 2 * GiB);
     memory_region_add_subregion(get_system_memory(), 0x400000000, EM2);
 
     MemoryRegion *EM3 = g_new(MemoryRegion, 1);
-    memory_region_init_alias(EM3, NULL, "EM3", EM1, 0, 8 * GiB);
+    memory_region_init_alias(EM3, NULL, "EM3", EM1, 0, 2 * GiB);
     memory_region_add_subregion(get_system_memory(), 0x600000000, EM3);
 
 
@@ -637,14 +642,9 @@ static void mm7705_init(MachineState *machine)
                              256 * KiB);
     memory_region_add_subregion(axi_mem, 0x0, BOOT_ROM_1_alias);
 
-
-    MemoryRegion *XHSIF0 = g_new(MemoryRegion, 1);
-    memory_region_init_rom(XHSIF0, NULL, "XHSIF0", 4 * GiB, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x1200000000, XHSIF0);
-
-    MemoryRegion *XHSIF1 = g_new(MemoryRegion, 1);
-    memory_region_init_rom(XHSIF1, NULL, "XHSIF1", 4 * GiB, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x1300000000, XHSIF1);
+    /* We doesn't emulate PCI-E (yet?) so add it's memory as unimplemented */
+    create_unimplemented_device("XHSIF0", 0x1200000000, 4 * GiB);
+    create_unimplemented_device("XHSIF1", 0x1300000000, 4 * GiB);
 
 
     MemoryRegion *BOOT_ROM = g_new(MemoryRegion, 1);
@@ -725,6 +725,9 @@ static void mm7705_class_init(ObjectClass *oc, void *data)
     mc->init = mm7705_init;
     mc->reset = mm7705_reset;
     mc->default_cpu_type = POWERPC_CPU_TYPE_NAME("476fp");
+
+    /* default mb115.01 board has 2 DDR slots with 2 GB on each */
+    mc->default_ram_size = 4 * GiB;
 
     ObjectProperty *prop;
     prop = object_class_property_add(oc, "boot-cfg", "uint8", mm7705_boot_cfg_get_and_set,
