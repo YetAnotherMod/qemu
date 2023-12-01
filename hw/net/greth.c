@@ -310,79 +310,85 @@ static int arp_accept_and_respond(GRETHState *s, const uint8_t *buf)
 
 static int edcl_accept_and_respond(GRETHState *s, const uint8_t *buf, size_t len)
 {
-    struct eth_header *mac_level = PKT_GET_ETH_HDR(buf);
-    struct ip_header *ip_level = PKT_GET_IP_HDR(buf);
-    struct udp_header *udp_level = PKT_EDCL_GET_UDP_HDR(buf);
+    uint8_t *send_buf = calloc(ETH_ZLEN, sizeof(uint8_t));
+
+    struct eth_header *mac_level_input = PKT_GET_ETH_HDR(buf);
+    struct ip_header *ip_level_input = PKT_GET_IP_HDR(buf);
+    struct udp_header *udp_level_input = PKT_EDCL_GET_UDP_HDR(buf);
     uint32_t *recive_data = PKT_EDCL_GET_EDCL_HDR(buf);
     uint32_t edcl_header = ntohl(*recive_data);
 
-    if (ntohs(mac_level->h_proto) != ETH_P_IP) {
+    if (ntohs(mac_level_input->h_proto) != ETH_P_IP) {
         return -1;
     }
 
-    if (ntohl(ip_level->ip_dst) != s->edcl_ip) {
+    if (ntohl(ip_level_input->ip_dst) != s->edcl_ip) {
         return -1;
     }
 
-    if (ip_level->ip_ver_len != EDCL_IP_VER_LEN) {
+    if (ip_level_input->ip_ver_len != EDCL_IP_VER_LEN) {
         return -1;
     }
 
-    if (ip_level->ip_p != IP_PROTO_UDP) {
+    if (ip_level_input->ip_p != IP_PROTO_UDP) {
         return -1;
     }
 
-    memcpy(mac_level->h_dest, mac_level->h_source, ETH_ALEN);
-    memcpy(mac_level->h_source, s->edcl_mac.a, ETH_ALEN);
-    mac_level->h_proto = htons(ETH_P_IP);
+    struct eth_header *mac_level_output = PKT_GET_ETH_HDR(send_buf);
+    struct ip_header *ip_level_output = PKT_GET_IP_HDR(send_buf);
+    struct udp_header *udp_level_output = PKT_EDCL_GET_UDP_HDR(send_buf);
 
-    ip_level->ip_dst = ip_level->ip_src;
-    ip_level->ip_src = htonl(s->edcl_ip);
+    memcpy(mac_level_output->h_dest, mac_level_input->h_source, ETH_ALEN);
+    memcpy(mac_level_output->h_source, s->edcl_mac.a, ETH_ALEN);
+    mac_level_output->h_proto = htons(ETH_P_IP);
 
-    udp_level->uh_dport = udp_level->uh_sport;
+    ip_level_output->ip_ver_len = ip_level_input->ip_ver_len;
+    ip_level_output->ip_ttl = ip_level_input->ip_ttl;
+    ip_level_output->ip_p = ip_level_input->ip_p;
+    ip_level_output->ip_src = htonl(s->edcl_ip);
+    ip_level_output->ip_dst = ip_level_input->ip_src;
+
+    udp_level_output->uh_dport = udp_level_input->uh_sport;
+    udp_level_output->uh_sport = udp_level_input->uh_sport;
+
+    uint32_t *changed_edcl_header = PKT_EDCL_GET_EDCL_HDR(send_buf);
 
     if (EDCL_GET_SEQUNCENUM(edcl_header) != s->edcl_sequnce_counter) {
         edcl_header |= EDCL_SET_WR_NACK;
         edcl_header &= EDCL_SET_SEQUNCENUM_NULL;
         edcl_header |= EDCL_SET_SEQUNCENUM(s->edcl_sequnce_counter);
         edcl_header &= EDCL_SET_LENGTH_NULL;
+        *changed_edcl_header = htonl(edcl_header);
 
-        *recive_data = htonl(edcl_header);
-        qemu_send_packet(qemu_get_queue(s->nic), buf, len);
+        qemu_send_packet(qemu_get_queue(s->nic), send_buf, len);
         return -1;
     }
 
     const uint32_t *addr = PKT_EDCL_GET_ADDR(buf);
-    uint32_t *data = PKT_EDCL_GET_DATA(buf);
+    uint32_t *data;
 
     if (EDCL_IS_WR(edcl_header)) {
+        data = PKT_EDCL_GET_DATA(buf);
         dma_memory_write(s->addr_space, ntohl(*addr), data, EDCL_GET_LENGTH(edcl_header),
                          MEMTXATTRS_UNSPECIFIED);
         edcl_header &= EDCL_SET_LENGTH_NULL;
-        *data = 0;
     } else {
+        send_buf = realloc(send_buf, PKT_EDCL_GET_CURRENT_LEN(edcl_header));
+        data = PKT_EDCL_GET_DATA(send_buf);
         dma_memory_read(s->addr_space, ntohl(*addr), data, EDCL_GET_LENGTH(edcl_header),
                         MEMTXATTRS_UNSPECIFIED);
     }
+    len = PKT_EDCL_GET_CURRENT_LEN(edcl_header);
 
-    size_t current_len = PKT_EDCL_GET_CURRENT_LEN(edcl_header);
-
-    if (current_len <= ETH_ZLEN) {
-        len = ETH_ZLEN;
-    } else {
-        len = current_len;
-    }
-
-    ip_level->ip_len = htons(current_len - sizeof(struct eth_header));
-    udp_level->uh_ulen = htons(current_len - sizeof(struct eth_header) -
-                               sizeof(struct ip_header));
+    ip_level_output->ip_len = htons(len - sizeof(struct eth_header));
+    udp_level_output->uh_ulen = htons(len - sizeof(struct eth_header) -
+                                    sizeof(struct ip_header));
 
     edcl_header &= ~EDCL_SET_WR_NACK;
-    *recive_data = htonl(edcl_header);
-
-    qemu_send_packet(qemu_get_queue(s->nic), buf, len);
+    *changed_edcl_header = htonl(edcl_header);
+    qemu_send_packet(qemu_get_queue(s->nic), send_buf, len);
     s->edcl_sequnce_counter++;
-
+    free(send_buf);
     return 1;
 }
 
