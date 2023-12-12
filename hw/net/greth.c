@@ -80,6 +80,7 @@
 #define ARP_ANSWER_OPCODE       2
 
 /* edcl header parts */
+#define EDCL_MAX_DATA_FIELD_LEN         0x3C8
 #define EDCL_IP_VER_LEN                 0x45
 #define EDCL_GET_SEQUNCENUM(hdr)        ((hdr) >> 18U)
 #define EDCL_IS_WR(hdr)                 (1U & ((hdr) >> 17U))
@@ -331,6 +332,10 @@ static int edcl_accept_and_respond(GRETHState *s, const uint8_t *buf, size_t len
     }
 
     if (ip_level_input->ip_p != IP_PROTO_UDP) {
+        return -1;
+    }
+
+    if (EDCL_GET_LENGTH(edcl_header) > EDCL_MAX_DATA_FIELD_LEN) {
         return -1;
     }
 
