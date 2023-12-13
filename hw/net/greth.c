@@ -671,6 +671,8 @@ static void greth_write(void *opaque, hwaddr offset, uint64_t val, unsigned size
             break;
         }
 
+        s->ctrl = val & CONTROL_MASK;
+
         if (val & CONTROL_SEND_EN) {
             greth_send_all(s);
         }
@@ -680,8 +682,6 @@ static void greth_write(void *opaque, hwaddr offset, uint64_t val, unsigned size
                 qemu_flush_queued_packets(qemu_get_queue(s->nic));
             }
         }
-
-        s->ctrl = val & CONTROL_MASK;
         break;
 
     case REG_STATUS:
