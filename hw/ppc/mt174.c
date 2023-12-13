@@ -268,7 +268,7 @@ static void mt174_init(MachineState *machine)
 
     /* init CPUs */
     s->cpu = POWERPC_CPU(cpu_create(machine->cpu_type));
-    ppc_booke_timers_init(s->cpu, 800000000, 0);
+    ppc_booke_timers_init(s->cpu, 200000000, 0);
 
     CPUPPCState *env = &s->cpu->env;
     ppc_dcr_init(env, dcr_read_error, dcr_write_error);
