@@ -192,6 +192,51 @@ static void dcr_ddr_graif_register(CPUPPCState *env, uint32_t base)
     }
 }
 
+/* Dummy DDR34LMC. Needed in DDR initialisation procedure */
+struct ddr3lmc {
+    uint32_t mcstat;
+};
+
+static uint32_t ddr_ddr3lmc_dcr_read (void *opaque, int dcrn)
+{
+    if ((dcrn & (0x1000 - 1)) == 0x10) {
+        struct ddr3lmc *ddr3lmc = opaque;
+        return ddr3lmc->mcstat;
+    }
+
+    return 0;
+}
+
+static void ddr_ddr3lmc_dcr_write (void *opaque, int dcrn, uint32_t val)
+{
+    if ((dcrn & (0x1000 - 1)) == 0x21) {
+        struct ddr3lmc *ddr3lmc = opaque;
+
+        if (val & 0x1000) {
+            ddr3lmc->mcstat |= 0x10000000;
+        }
+
+        if (val & 0x20000000) {
+            ddr3lmc->mcstat |= 0x80000000;
+        }
+    }
+}
+
+static void dcr_ddr_ddr3lmc_register(CPUPPCState *env, uint32_t base)
+{
+    uint32_t i;
+
+    struct ddr3lmc *ddr3lmc = calloc(1, sizeof(struct ddr3lmc));
+    assert(ddr3lmc != NULL);
+
+    ddr3lmc->mcstat = 0x60000000;
+
+    for (i = 0x0; i <= 0xfb; i++) {
+        ppc_dcr_register(env, base + i, ddr3lmc,
+                         ddr_ddr3lmc_dcr_read, ddr_ddr3lmc_dcr_write);
+    }
+}
+
 static uint32_t ddr_aximcif2_dcr_read (void *opaque, int dcrn)
 {
     return 0;
@@ -274,6 +319,60 @@ static const MemoryRegionOps cpu_pll_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
+/* Dummy DDR PHY. Needed in DDR initialisation procedure */
+struct ddr_phy {
+    uint32_t PHYREG02;
+    uint32_t PHYREGF0;
+    uint32_t PHYREGFF;
+};
+
+static uint64_t ddr_phy_read(void *opaque, hwaddr offset, unsigned size)
+{
+    struct ddr_phy *ddr_phy = opaque;
+
+    switch (offset) {
+    case 0x8:
+        return ddr_phy->PHYREG02;
+
+    case 0x3c0:
+        return ddr_phy->PHYREGF0;
+
+    case 0x3fc:
+        return ddr_phy->PHYREGFF;
+
+    default:
+        return 0;
+    }
+}
+
+static void ddr_phy_write(void *opaque, hwaddr offset, uint64_t data, unsigned size)
+{
+    struct ddr_phy *ddr_phy = opaque;
+
+    switch (offset) {
+    case 0x8:
+        ddr_phy->PHYREG02 = data;
+
+        if (ddr_phy->PHYREG02 & 0x4) {
+            ddr_phy->PHYREGF0 = 0x1f;
+        }
+
+        if (ddr_phy->PHYREG02 & 0x1) {
+            ddr_phy->PHYREGFF = 0x1f;
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+static const MemoryRegionOps ddr_phy_ops = {
+    .read = ddr_phy_read,
+    .write = ddr_phy_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
 /* Machine init */
 static void create_initial_mapping(CPUPPCState *env)
 {
@@ -334,13 +433,13 @@ static void mm7705_init(MachineState *machine)
     dcr_ddr_aximcif2_register(env, 0x80020000);
     dcr_ddr_mclfir_register(env, 0x80030000);
     dcr_ddr_graif_register(env, 0x80040000);
-    dcr_ddr_graif_register(env, 0x80050000);
+    dcr_ddr_ddr3lmc_register(env, 0x80050000);
 
     dcr_ddr_plb6mcif2_register(env, 0x80100000);
     dcr_ddr_aximcif2_register(env, 0x80110000);
     dcr_ddr_mclfir_register(env, 0x80120000);
     dcr_ddr_graif_register(env, 0x80130000);
-    dcr_ddr_graif_register(env, 0x80140000);
+    dcr_ddr_ddr3lmc_register(env, 0x80140000);
 
     dcr_ddr_plb6mcif2_register(env, 0x80160000);
     dcr_ddr_plb6mcif2_register(env, 0x80180000);
@@ -713,6 +812,22 @@ static void mm7705_reset(MachineState *machine, ShutdownCause reason)
     MemoryRegion *cpu_pll = g_new(MemoryRegion, 1);
     memory_region_init_io(cpu_pll, NULL, &cpu_pll_ops, NULL, "cpu_pll", 0x4);
     memory_region_add_subregion(get_system_memory(), 0x1038006000, cpu_pll);
+
+    {
+        struct ddr_phy *ddr_phy;
+        ddr_phy = calloc(2, sizeof(ddr_phy));
+        assert(ddr_phy != NULL);
+
+        MemoryRegion *EM0_ddr_phy = g_new(MemoryRegion, 1);
+        memory_region_init_io(EM0_ddr_phy, NULL, &ddr_phy_ops, &ddr_phy[0], "EM0_ddr_phy",
+                              0x400);
+        memory_region_add_subregion(get_system_memory(), 0x103800E000, EM0_ddr_phy);
+
+        MemoryRegion *EM1_ddr_phy = g_new(MemoryRegion, 1);
+        memory_region_init_io(EM1_ddr_phy, NULL, &ddr_phy_ops, &ddr_phy[1], "EM1_ddr_phy",
+                              0x400);
+        memory_region_add_subregion(get_system_memory(), 0x103800F000, EM1_ddr_phy);
+    }
 
     // Set GPIO0 pins
     uint8_t boot_cfg = s->boot_cfg;
