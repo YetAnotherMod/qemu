@@ -382,6 +382,9 @@ static int edcl_accept_and_respond(GRETHState *s, const uint8_t *buf, size_t len
         data = PKT_EDCL_GET_DATA(send_buf);
         dma_memory_read(s->addr_space, ntohl(*addr), data, EDCL_GET_LENGTH(edcl_header),
                         MEMTXATTRS_UNSPECIFIED);
+        changed_edcl_header = PKT_EDCL_GET_EDCL_HDR(send_buf);
+        ip_level_output = PKT_GET_IP_HDR(send_buf);
+        udp_level_output = PKT_EDCL_GET_UDP_HDR(send_buf);
     }
     len = PKT_EDCL_GET_CURRENT_LEN(edcl_header);
 
