@@ -332,7 +332,8 @@ static void mt174_init(MachineState *machine)
 
         qdev_prop_set_drive(pflash, "drive", blk_by_legacy_dinfo(dinfo));
 
-        qdev_prop_set_uint32(pflash, "num-blocks", 512);
+        // TODO: we can get input file size using blk_getlength(). do we need it?
+        qdev_prop_set_uint32(pflash, "num-blocks", 256);
         qdev_prop_set_uint32(pflash, "sector-length", 256 * KiB);
 
         qdev_prop_set_uint8(pflash, "width", 4);
@@ -342,13 +343,26 @@ static void mt174_init(MachineState *machine)
         qdev_prop_set_uint16(pflash, "id1", 0x0000);
         qdev_prop_set_uint16(pflash, "id2", 0x0003);
         qdev_prop_set_uint16(pflash, "id3", 0x0001);
-        qdev_prop_set_uint16(pflash, "unlock-addr0", 0x0AAA);
-        qdev_prop_set_uint16(pflash, "unlock-addr1", 0x0555);
+        qdev_prop_set_uint16(pflash, "unlock-addr0", 0x0555);
+        qdev_prop_set_uint16(pflash, "unlock-addr1", 0x02AA);
         qdev_prop_set_string(pflash, "name", "nor_flash");
         sysbus_realize_and_unref(SYS_BUS_DEVICE(pflash), &error_fatal);
 
         MemoryRegion *pflash_region = sysbus_mmio_get_region(SYS_BUS_DEVICE(pflash), 0);
         memory_region_add_subregion_overlap(EMI, 0x70000000, pflash_region, 1);
+
+        // size of real data that we will "alias" through all the bank
+        uint64_t region_size = memory_region_size(pflash_region);
+
+        // FIXME: add bank size as a constant or smth like that
+        assert((256 * MiB) % region_size == 0);
+
+        for (int i = 1; i < (256 * MiB) / region_size; i++) {
+            MemoryRegion *alias = g_new(MemoryRegion, 1);
+            memory_region_init_alias(alias, NULL, NULL, pflash_region, 0, region_size);
+            memory_region_add_subregion_overlap(EMI, 0x70000000 + region_size * i, alias,
+                                                1);
+        }
     }
 
     MemoryRegion *IM0 = g_new(MemoryRegion, 1);
