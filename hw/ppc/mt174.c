@@ -40,8 +40,11 @@ typedef struct {
 #define MT174_MACHINE(obj) \
     OBJECT_CHECK(MT174MachineState, obj, TYPE_MT174_MACHINE)
 
-#define MT174_BOOT_CFG_DEFVAL 0x82
+#define MT174_USE_INTERNAL_ROM 7
 #define MT174_SD_CARD_INSERTED_GPIO 3
+#define MT174_BOOT_IN_HOST_MODE 1
+#define MT174_BOOT_CFG_DEFVAL \
+    (1 << MT174_USE_INTERNAL_ROM | 1 << MT174_BOOT_IN_HOST_MODE)
 
 /* DCR registers */
 static int dcr_read_error(int dcrn)
@@ -530,9 +533,12 @@ static void mt174_init(MachineState *machine)
     memory_region_add_subregion(get_system_memory(), 0x20c0400000, switch_axi64);
 
     MemoryRegion *rom_alias = g_new(MemoryRegion, 1);
-    memory_region_init_alias(rom_alias, NULL, "rom_alias", rom, 0, 64 * KiB);
+    if (s->boot_cfg & (1 << MT174_USE_INTERNAL_ROM)) {
+        memory_region_init_alias(rom_alias, NULL, NULL, rom, 0, 64 * KiB);
+    } else {
+        memory_region_init_alias(rom_alias, NULL, NULL, EMI, 0x7fff0000, 64 * KiB);
+    }
     memory_region_add_subregion(get_system_memory(), 0x3ffffff0000, rom_alias);
-
 
     qemu_register_reset(cpu_reset_temp, s->cpu);
 }
@@ -561,7 +567,7 @@ static void mt174_reset(MachineState *machine, ShutdownCause reason)
 
         close(fd);
 
-        address_space_write_rom(&address_space_memory, 0x3ffffff0000,
+        address_space_write_rom(&address_space_memory, 0x1fffff0000,
             MEMTXATTRS_UNSPECIFIED, data, file_size);
     }
 
