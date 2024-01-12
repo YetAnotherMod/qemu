@@ -341,7 +341,7 @@ static void mt174_init(MachineState *machine)
 
         qdev_prop_set_uint8(pflash, "width", 4);
         qdev_prop_set_uint8(pflash, "mappings", 1);
-        qdev_prop_set_uint8(pflash, "big-endian", 0);
+        qdev_prop_set_uint8(pflash, "big-endian", 1);
         qdev_prop_set_uint16(pflash, "id0", 0x0001);
         qdev_prop_set_uint16(pflash, "id1", 0x0000);
         qdev_prop_set_uint16(pflash, "id2", 0x0003);
