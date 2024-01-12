@@ -405,6 +405,10 @@ static void mt174_init(MachineState *machine)
     }
 
     object_initialize_child(OBJECT(s), "eth0", &s->greth[0], TYPE_GRETH);
+    if (nd_table[0].used) {
+        qemu_check_nic_model(&nd_table[0], TYPE_GRETH);
+        qdev_set_nic_properties(DEVICE(&s->greth[0]), &nd_table[0]);
+    }
     greth_change_address_space(&s->greth[0], axi_addr_space, &error_fatal);
     sysbus_realize(SYS_BUS_DEVICE(&s->greth[0]), &error_fatal);
     busdev = SYS_BUS_DEVICE(&s->greth[0]);
@@ -451,10 +455,10 @@ static void mt174_init(MachineState *machine)
     s->gpio[1] = sysbus_create_simple("pl061", 0x20c0038000, NULL);
 
     if (serial_hd(1)) {
-        object_initialize_child(OBJECT(s), "uart1", &s->uart[0], TYPE_PL011);
-        qdev_prop_set_chr(DEVICE(&s->uart[0]), "chardev", serial_hd(0));
-        sysbus_realize(SYS_BUS_DEVICE(&s->uart[0]), &error_fatal);
-        busdev = SYS_BUS_DEVICE(&s->uart[0]);
+        object_initialize_child(OBJECT(s), "uart1", &s->uart[1], TYPE_PL011);
+        qdev_prop_set_chr(DEVICE(&s->uart[1]), "chardev", serial_hd(1));
+        sysbus_realize(SYS_BUS_DEVICE(&s->uart[1]), &error_fatal);
+        busdev = SYS_BUS_DEVICE(&s->uart[1]);
         memory_region_add_subregion(get_system_memory(), 0x20c0039000,
                                     sysbus_mmio_get_region(busdev, 0));
         sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 37));
