@@ -340,7 +340,8 @@ static void mt174_init(MachineState *machine)
         qdev_prop_set_uint32(pflash, "sector-length", 256 * KiB);
 
         qdev_prop_set_uint8(pflash, "width", 4);
-        qdev_prop_set_uint8(pflash, "mappings", 1);
+        // replicate nor-flash to fill the bank of 256 MB
+        qdev_prop_set_uint8(pflash, "mappings", 4);
         qdev_prop_set_uint8(pflash, "big-endian", 1);
         qdev_prop_set_uint16(pflash, "id0", 0x0001);
         qdev_prop_set_uint16(pflash, "id1", 0x0000);
@@ -353,19 +354,6 @@ static void mt174_init(MachineState *machine)
 
         MemoryRegion *pflash_region = sysbus_mmio_get_region(SYS_BUS_DEVICE(pflash), 0);
         memory_region_add_subregion_overlap(EMI, 0x70000000, pflash_region, 1);
-
-        // size of real data that we will "alias" through all the bank
-        uint64_t region_size = memory_region_size(pflash_region);
-
-        // FIXME: add bank size as a constant or smth like that
-        assert((256 * MiB) % region_size == 0);
-
-        for (int i = 1; i < (256 * MiB) / region_size; i++) {
-            MemoryRegion *alias = g_new(MemoryRegion, 1);
-            memory_region_init_alias(alias, NULL, NULL, pflash_region, 0, region_size);
-            memory_region_add_subregion_overlap(EMI, 0x70000000 + region_size * i, alias,
-                                                1);
-        }
     }
 
     MemoryRegion *IM0 = g_new(MemoryRegion, 1);
