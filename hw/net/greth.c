@@ -25,7 +25,7 @@
 #define REG_MAC_LSB_EDCL    0x2C
 
 #define CONTROL_EDCL_AVAIL      0x80000000U
-#define CONTROL_EDCL_BUFF_2K    0x10000000U
+#define CONTROL_EDCL_BUFF_MASK  0x70000000U
 #define CONTROL_MULTICAST_AVAIL 0x1000000U
 #define CONTROL_EDCL_DISABLE    0x4000U
 #define CONTROL_MULTICAST_EN    0x800U
@@ -38,8 +38,16 @@
 #define CONTROL_RECV_EN         0x2U
 #define CONTROL_SEND_EN         0x1U
 
+#define EDCL_BUFFER_SZ_1K       0x00000000U
+#define EDCL_BUFFER_SZ_2K       0x10000000U
+#define EDCL_BUFFER_SZ_4K       0x20000000U
+#define EDCL_BUFFER_SZ_8K       0x30000000U
+#define EDCL_BUFFER_SZ_16K      0x40000000U
+#define EDCL_BUFFER_SZ_32K      0x50000000U
+#define EDCL_BUFFER_SZ_64K      0x60000000U
+
 #define CONTROL_RESET_VAL \
-    (CONTROL_EDCL_AVAIL | CONTROL_EDCL_BUFF_2K | CONTROL_MULTICAST_AVAIL | CONTROL_SPEED)
+    (CONTROL_EDCL_AVAIL | EDCL_BUFFER_SZ_2K | CONTROL_MULTICAST_AVAIL | CONTROL_SPEED)
 
 #define CONTROL_MASK \
     (CONTROL_MULTICAST_EN | CONTROL_SPEED | CONTROL_PROMISCUOUS | CONTROL_FULL_DUPLEX | \
@@ -80,6 +88,8 @@
 #define ARP_ANSWER_OPCODE       2
 
 /* edcl header parts */
+#define EDCL_MINIMUM_DATA_FIELD_LEN     0xC8
+#define EDCL_MEDIUM_DATA_FIELD_LEN      0x1C8
 #define EDCL_MAX_DATA_FIELD_LEN         0x3C8
 #define EDCL_IP_VER_LEN                 0x45
 #define EDCL_GET_SEQUNCENUM(hdr)        ((hdr) >> 18U)
@@ -373,8 +383,26 @@ static int edcl_accept_and_respond(GRETHState *s, const uint8_t *buf, size_t len
     uint32_t *data;
 
     if (EDCL_IS_WR(edcl_header)) {
+        switch (s->ctrl & CONTROL_EDCL_BUFF_MASK) {
+            case EDCL_BUFFER_SZ_1K:
+                len = EDCL_MINIMUM_DATA_FIELD_LEN;
+                break;
+            case EDCL_BUFFER_SZ_2K:
+            case EDCL_BUFFER_SZ_4K:
+                len = EDCL_MEDIUM_DATA_FIELD_LEN;
+                break;
+            case EDCL_BUFFER_SZ_8K:
+            case EDCL_BUFFER_SZ_16K:
+            case EDCL_BUFFER_SZ_32K:
+            case EDCL_BUFFER_SZ_64K:
+                len = EDCL_MAX_DATA_FIELD_LEN;
+                break;
+        }
+        if (EDCL_GET_LENGTH(edcl_header) < len) {
+            len = EDCL_GET_LENGTH(edcl_header);
+        }
         data = PKT_EDCL_GET_DATA(buf);
-        dma_memory_write(s->addr_space, ntohl(*addr), data, EDCL_GET_LENGTH(edcl_header),
+        dma_memory_write(s->addr_space, ntohl(*addr), data, len,
                          MEMTXATTRS_UNSPECIFIED);
         edcl_header &= EDCL_SET_LENGTH_NULL;
     } else {
