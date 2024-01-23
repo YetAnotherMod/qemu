@@ -393,12 +393,21 @@ static void mt174_init(MachineState *machine)
         sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 36));
     }
 
+    // FIXME: those are for mt150.02
+    uint8_t edcl_mac[][6] = {
+        {0xec, 0x17, 0x66, 0x0e, 0x10, 0x00},
+        {0xec, 0x17, 0x66, 0x0e, 0x10, 0x01},
+    };
+
     object_initialize_child(OBJECT(s), "eth0", &s->greth[0], TYPE_GRETH);
     if (nd_table[0].used) {
         qemu_check_nic_model(&nd_table[0], TYPE_GRETH);
         qdev_set_nic_properties(DEVICE(&s->greth[0]), &nd_table[0]);
     }
     greth_change_address_space(&s->greth[0], axi_addr_space, &error_fatal);
+    qdev_prop_set_macaddr(DEVICE(&s->greth[0]), "edcl_mac", edcl_mac[0]);
+    /* set ip 192.168.1.48 as one number */
+    qdev_prop_set_uint32(DEVICE(&s->greth[0]), "edcl_ip", 0xc0a80130);
     sysbus_realize(SYS_BUS_DEVICE(&s->greth[0]), &error_fatal);
     busdev = SYS_BUS_DEVICE(&s->greth[0]);
     memory_region_add_subregion(get_system_memory(), 0x20c002a000,
@@ -456,6 +465,9 @@ static void mt174_init(MachineState *machine)
 
     object_initialize_child(OBJECT(s), "eth1", &s->greth[1], TYPE_GRETH);
     greth_change_address_space(&s->greth[1], axi_addr_space, &error_fatal);
+    qdev_prop_set_macaddr(DEVICE(&s->greth[1]), "edcl_mac", edcl_mac[1]);
+    /* set ip 192.168.1.49 as one number */
+    qdev_prop_set_uint32(DEVICE(&s->greth[1]), "edcl_ip", 0xc0a80131);
     sysbus_realize(SYS_BUS_DEVICE(&s->greth[1]), &error_fatal);
     busdev = SYS_BUS_DEVICE(&s->greth[1]);
     memory_region_add_subregion(get_system_memory(), 0x20c003a000,
