@@ -807,12 +807,18 @@ static void greth_reset(DeviceState *dev)
     greth_phy_reset(s);
 
     s->status = 0;
-    s->mac_msb = 0;
-    s->mac_lsb = 0;
     s->send_desc = 0;
     s->recv_desc = 0;
     s->mdio = MDIO_LINKFAIL;
     s->edcl_sequnce_counter = 0;
+
+    s->mac_msb = (uint32_t)s->conf.macaddr.a[0] << 8;
+    s->mac_msb |= (uint32_t)s->conf.macaddr.a[1] << 0;
+
+    s->mac_lsb = (uint32_t)s->conf.macaddr.a[2] << 24;
+    s->mac_lsb |= (uint32_t)s->conf.macaddr.a[3] << 16;
+    s->mac_lsb |= (uint32_t)s->conf.macaddr.a[4] << 8;
+    s->mac_lsb |= (uint32_t)s->conf.macaddr.a[5] << 0;
 }
 
 static const MemoryRegionOps greth_ops = {
