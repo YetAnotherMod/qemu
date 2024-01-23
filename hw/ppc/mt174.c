@@ -380,7 +380,8 @@ static void mt174_init(MachineState *machine)
     memory_region_init_ram(mko2, NULL, "mko2", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0021000, mko2);
 
-    s->gpio[0] = sysbus_create_simple("pl061", 0x20c0028000, NULL);
+    s->gpio[0] = sysbus_create_simple("pl061", 0x20c0028000,
+                                      qdev_get_gpio_in(DEVICE(&s->mpic), 32));
 
     if (serial_hd(0)) {
         object_initialize_child(OBJECT(s), "uart0", &s->uart[0], TYPE_PL011);
@@ -440,7 +441,8 @@ static void mt174_init(MachineState *machine)
     memory_region_init_ram(mko3, NULL, "mko3", 4 * KiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0031000, mko3);
 
-    s->gpio[1] = sysbus_create_simple("pl061", 0x20c0038000, NULL);
+    s->gpio[1] = sysbus_create_simple("pl061", 0x20c0038000,
+                                      qdev_get_gpio_in(DEVICE(&s->mpic), 33));
 
     if (serial_hd(1)) {
         object_initialize_child(OBJECT(s), "uart1", &s->uart[1], TYPE_PL011);
