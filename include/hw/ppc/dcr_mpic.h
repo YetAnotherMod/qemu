@@ -7,13 +7,13 @@
 #define MAX_IPI_NUM			4
 #define MAX_TIMER_NUM		4
 
-enum {
+typedef enum {
 	OUTPUT_NON_CRIT,
 	OUTPUT_CRIT,
 	OUTPUT_MCHECK,
 
 	OUTPUT_IRQ_NUM,
-};
+} output_type_t;
 
 typedef struct {
 	// Vector/Priority register data
@@ -51,6 +51,7 @@ typedef struct {
 	uint32_t spv;
 
 	irq_config_t *current_irqs[MAX_CPU_SUPPORTED][OUTPUT_IRQ_NUM];
+	irq_config_t *pending_irqs[MAX_CPU_SUPPORTED][OUTPUT_IRQ_NUM];
 
 	QemuMutex mutex;
 

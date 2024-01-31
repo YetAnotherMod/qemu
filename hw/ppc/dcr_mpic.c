@@ -112,32 +112,38 @@ static void mpic_update_irq(MpicState *s)
     }
 
     // check all pending irqs to find the highest prio
-    irq_config_t *pending_irqs[1][OUTPUT_IRQ_NUM] = { { NULL, NULL, NULL} };
+    irq_config_t *pending_local[1][OUTPUT_IRQ_NUM] = { { NULL, NULL, NULL} };
 
     for (int i = 0; i < ARRAY_SIZE(s->irq); i++) {
         if (!s->irq[i].pending || s->irq[i].masked) {
             continue;
         }
 
+        if (s->irq[i].priority <= s->task_prio[0]) {
+            continue;
+        }
+
         int output_type = get_output_type(s, s->irq[i].priority);
-        if (s->irq[i].priority > s->task_prio[0] &&
-            (pending_irqs[0][output_type] == NULL ||
-            s->irq[i].priority > pending_irqs[0][output_type]->priority)) {
-            pending_irqs[0][output_type] = &s->irq[i];
+        if (pending_local[0][output_type] == NULL ||
+            s->irq[i].priority > pending_local[0][output_type]->priority) {
+            pending_local[0][output_type] = &s->irq[i];
         }
     }
 
     qemu_mutex_lock(&s->mutex);
 
     for (int i = 0; i < OUTPUT_IRQ_NUM; i++) {
-        if (pending_irqs[0][i] &&
-            (s->current_irqs[0][i] == NULL ||
-            pending_irqs[0][i]->priority > s->current_irqs[0][i]->priority)) {
-            s->current_irqs[0][i] = pending_irqs[0][i];
+        if (pending_local[0][i]) {
+            if (s->current_irqs[0][i] == NULL ||
+                pending_local[0][i]->priority > s->current_irqs[0][i]->priority) {
+                if (s->pending_irqs[0][i] == NULL ||
+                    pending_local[0][i]->priority > s->pending_irqs[0][i]->priority) {
+                    s->pending_irqs[0][i] = pending_local[0][i];
+                }
+            }
         }
 
-        if (s->current_irqs[0][i] && s->current_irqs[0][i]->pending) {
-            s->current_irqs[0][i]->activity = true;
+        if (s->pending_irqs[0][i] && s->pending_irqs[0][i]->pending) {
             qemu_irq_raise(s->output_irq[i]);
         } else {
             qemu_irq_lower(s->output_irq[i]);
@@ -167,8 +173,33 @@ static void mpic_reset(MpicState *s)
     s->vitc_mcheck_border = VITC_BORDER_DEFAULT;
 
     memset(s->current_irqs, 0, sizeof(s->current_irqs));
+    memset(s->pending_irqs, 0, sizeof(s->pending_irqs));
 
     mpic_update_irq(s);
+}
+
+static uint32_t mpic_return_current_irq(MpicState *s, output_type_t type)
+{
+    qemu_mutex_lock(&s->mutex);
+    if (s->pending_irqs[0][type] == NULL) {
+        qemu_mutex_unlock(&s->mutex);
+        return s->spv;
+    }
+
+    qemu_irq_lower(s->output_irq[type]);
+
+    s->current_irqs[0][type] = s->pending_irqs[0][type];
+    s->pending_irqs[0][type] = NULL;
+
+    s->current_irqs[0][type]->activity = true;
+
+    // clear pending bit (edge-triggered, inter-process or timer)
+    if (!s->current_irqs[0][type]->sense) {
+        s->current_irqs[0][type]->pending = false;
+    }
+
+    qemu_mutex_unlock(&s->mutex);
+    return s->current_irqs[0][type]->vector;
 }
 
 static uint32_t mpic_dcr_read (void *opaque, int dcrn)
@@ -249,28 +280,13 @@ static uint32_t mpic_dcr_read (void *opaque, int dcrn)
         return 0;
 
     case REG_NON_CRIT_IAR:
-        if (s->current_irqs[0][OUTPUT_NON_CRIT]) {
-            qemu_irq_lower(s->output_irq[OUTPUT_NON_CRIT]);
-            return s->current_irqs[0][OUTPUT_NON_CRIT]->vector;
-        } else {
-            return s->spv;
-        }
+        return mpic_return_current_irq(s, OUTPUT_NON_CRIT);
 
     case REG_CRIT_IAR:
-        if (s->current_irqs[0][OUTPUT_CRIT]) {
-            qemu_irq_lower(s->output_irq[OUTPUT_CRIT]);
-            return s->current_irqs[0][OUTPUT_CRIT]->vector;
-        } else {
-            return s->spv;
-        }
+        return mpic_return_current_irq(s, OUTPUT_CRIT);
 
     case REG_MCHECK_IAR:
-        if (s->current_irqs[0][OUTPUT_MCHECK]) {
-            qemu_irq_lower(s->output_irq[OUTPUT_MCHECK]);
-            return s->current_irqs[0][OUTPUT_MCHECK]->vector;
-        } else {
-            return s->spv;
-        }
+        return mpic_return_current_irq(s, OUTPUT_MCHECK);
     }
 
     return 0;
@@ -361,28 +377,16 @@ static void mpic_dcr_write (void *opaque, int dcrn, uint32_t val)
 
     case REG_NON_CRIT_EOI:
         s->current_irqs[0][OUTPUT_NON_CRIT]->activity = false;
-        // clear pending bit (edge-triggered, inter-process or timer)
-        if (!s->current_irqs[0][OUTPUT_NON_CRIT]->sense) {
-            s->current_irqs[0][OUTPUT_NON_CRIT]->pending = false;
-        }
         s->current_irqs[0][OUTPUT_NON_CRIT] = NULL;
         break;
 
     case REG_CRIT_EOI:
         s->current_irqs[0][OUTPUT_CRIT]->activity = false;
-        // clear pending bit (edge-triggered, inter-process or timer)
-        if (!s->current_irqs[0][OUTPUT_CRIT]->sense) {
-            s->current_irqs[0][OUTPUT_CRIT]->pending = false;
-        }
         s->current_irqs[0][OUTPUT_CRIT] = NULL;
         break;
 
     case REG_MCHECK_EOI:
         s->current_irqs[0][OUTPUT_MCHECK]->activity = false;
-        // clear pending bit (edge-triggered, inter-process or timer)
-        if (!s->current_irqs[0][OUTPUT_MCHECK]->sense) {
-            s->current_irqs[0][OUTPUT_MCHECK]->pending = false;
-        }
         s->current_irqs[0][OUTPUT_MCHECK] = NULL;
         break;
     }
