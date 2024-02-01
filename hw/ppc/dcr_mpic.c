@@ -88,6 +88,54 @@
 #define IPI_2_INDEX         (EXT_SOURCE_NUM + MAX_TIMER_NUM + 2)
 #define IPI_3_INDEX         (EXT_SOURCE_NUM + MAX_TIMER_NUM + 3)
 
+// FIXME: whenever this constant is used -> make code work for all CPU
+static const uint32_t cpu_index = 0;
+
+static void *mpic_get_current_irq(MpicState *s, output_type_t type)
+{
+    GList *last = g_list_last(s->current_irq_list[cpu_index][type]);
+
+    if (last) {
+        return last->data;
+    }
+
+    return NULL;
+}
+
+static void *mpic_remove_current_irq(MpicState *s, output_type_t type)
+{
+    irq_config_t *current_irq = mpic_get_current_irq(s, type);
+    assert(current_irq != NULL);
+
+    s->current_irq_list[cpu_index][type] =
+        g_list_remove(s->current_irq_list[cpu_index][type], current_irq);
+
+    return current_irq;
+}
+
+static void mpic_set_current_irq(MpicState *s, output_type_t type, irq_config_t *irq)
+{
+    s->current_irq_list[cpu_index][type] =
+        g_list_append(s->current_irq_list[cpu_index][type], irq);
+}
+
+static void mpic_update_pending_irq(MpicState *s, output_type_t type, irq_config_t *irq)
+{
+    /* check if there is no active irqs of any type with higher priority then current */
+    for (output_type_t i = type; i < OUTPUT_IRQ_NUM; i++) {
+        irq_config_t *current_irq = mpic_get_current_irq(s, i);
+
+        if (current_irq != NULL && irq->priority <= current_irq->priority) {
+            return;
+        }
+    }
+
+    if (s->pending_irqs[cpu_index][type] == NULL ||
+        irq->priority > s->pending_irqs[cpu_index][type]->priority) {
+        s->pending_irqs[cpu_index][type] = irq;
+    }
+}
+
 static int get_output_type(MpicState *s, int prio)
 {
     if (prio >= s->vitc_mcheck_border) {
@@ -101,9 +149,7 @@ static int get_output_type(MpicState *s, int prio)
 
 static void mpic_update_irq(MpicState *s)
 {
-    // FIXME: make this for all CPU
-
-    if (s->task_prio[0] == TASK_PRIO_MASK) {
+    if (s->task_prio[cpu_index] == TASK_PRIO_MASK) {
         // disable all irqs to this processor
         qemu_irq_lower(s->output_irq[OUTPUT_NON_CRIT]);
         qemu_irq_lower(s->output_irq[OUTPUT_CRIT]);
@@ -119,31 +165,25 @@ static void mpic_update_irq(MpicState *s)
             continue;
         }
 
-        if (s->irq[i].priority <= s->task_prio[0]) {
+        if (s->irq[i].priority <= s->task_prio[cpu_index]) {
             continue;
         }
 
         int output_type = get_output_type(s, s->irq[i].priority);
-        if (pending_local[0][output_type] == NULL ||
-            s->irq[i].priority > pending_local[0][output_type]->priority) {
-            pending_local[0][output_type] = &s->irq[i];
+        if (pending_local[cpu_index][output_type] == NULL ||
+            s->irq[i].priority > pending_local[cpu_index][output_type]->priority) {
+            pending_local[cpu_index][output_type] = &s->irq[i];
         }
     }
 
     qemu_mutex_lock(&s->mutex);
 
-    for (int i = 0; i < OUTPUT_IRQ_NUM; i++) {
-        if (pending_local[0][i]) {
-            if (s->current_irqs[0][i] == NULL ||
-                pending_local[0][i]->priority > s->current_irqs[0][i]->priority) {
-                if (s->pending_irqs[0][i] == NULL ||
-                    pending_local[0][i]->priority > s->pending_irqs[0][i]->priority) {
-                    s->pending_irqs[0][i] = pending_local[0][i];
-                }
-            }
+    for (output_type_t i = OUTPUT_NON_CRIT; i < OUTPUT_IRQ_NUM; i++) {
+        if (pending_local[cpu_index][i]) {
+            mpic_update_pending_irq(s, i, pending_local[cpu_index][i]);
         }
 
-        if (s->pending_irqs[0][i] && s->pending_irqs[0][i]->pending) {
+        if (s->pending_irqs[cpu_index][i] && s->pending_irqs[cpu_index][i]->pending) {
             qemu_irq_raise(s->output_irq[i]);
         } else {
             qemu_irq_lower(s->output_irq[i]);
@@ -172,8 +212,12 @@ static void mpic_reset(MpicState *s)
     s->vitc_crit_border = VITC_BORDER_DEFAULT;
     s->vitc_mcheck_border = VITC_BORDER_DEFAULT;
 
-    memset(s->current_irqs, 0, sizeof(s->current_irqs));
     memset(s->pending_irqs, 0, sizeof(s->pending_irqs));
+
+    for (int i = 0; i < OUTPUT_IRQ_NUM; i++) {
+        g_list_free(s->current_irq_list[cpu_index][i]);
+        s->current_irq_list[cpu_index][i] = NULL;
+    }
 
     mpic_update_irq(s);
 }
@@ -181,25 +225,27 @@ static void mpic_reset(MpicState *s)
 static uint32_t mpic_return_current_irq(MpicState *s, output_type_t type)
 {
     qemu_mutex_lock(&s->mutex);
-    if (s->pending_irqs[0][type] == NULL) {
+    if (s->pending_irqs[cpu_index][type] == NULL) {
         qemu_mutex_unlock(&s->mutex);
         return s->spv;
     }
 
     qemu_irq_lower(s->output_irq[type]);
 
-    s->current_irqs[0][type] = s->pending_irqs[0][type];
-    s->pending_irqs[0][type] = NULL;
+    irq_config_t *current_irq = s->pending_irqs[cpu_index][type];
+    s->pending_irqs[cpu_index][type] = NULL;
 
-    s->current_irqs[0][type]->activity = true;
+    mpic_set_current_irq(s, type, current_irq);
+
+    current_irq->activity = true;
 
     // clear pending bit (edge-triggered, inter-process or timer)
-    if (!s->current_irqs[0][type]->sense) {
-        s->current_irqs[0][type]->pending = false;
+    if (!current_irq->sense) {
+        current_irq->pending = false;
     }
 
     qemu_mutex_unlock(&s->mutex);
-    return s->current_irqs[0][type]->vector;
+    return current_irq->vector;
 }
 
 static uint32_t mpic_dcr_read (void *opaque, int dcrn)
@@ -274,7 +320,7 @@ static uint32_t mpic_dcr_read (void *opaque, int dcrn)
     // FIXME: this registers are per-cpu so handle it address and current CPU
     switch (dcrn & ~REG_CPU_MASK) {
     case REG_TASK_PRIO:
-        return s->task_prio[0];
+        return s->task_prio[cpu_index];
 
     case REG_WHO_AM_I:
         return 0;
@@ -362,6 +408,7 @@ static void mpic_dcr_write (void *opaque, int dcrn, uint32_t val)
     }
 
     // FIXME: this registers are per-cpu so handle it address and current CPU
+    irq_config_t *current_irq;
     switch (dcrn & ~REG_CPU_MASK) {
     case REG_IPID_0:
     case REG_IPID_1:
@@ -372,22 +419,22 @@ static void mpic_dcr_write (void *opaque, int dcrn, uint32_t val)
         break;
 
     case REG_TASK_PRIO:
-        s->task_prio[0] = val & TASK_PRIO_MASK;
+        s->task_prio[cpu_index] = val & TASK_PRIO_MASK;
         break;
 
     case REG_NON_CRIT_EOI:
-        s->current_irqs[0][OUTPUT_NON_CRIT]->activity = false;
-        s->current_irqs[0][OUTPUT_NON_CRIT] = NULL;
+        current_irq = mpic_remove_current_irq(s, OUTPUT_NON_CRIT);
+        current_irq->activity = false;
         break;
 
     case REG_CRIT_EOI:
-        s->current_irqs[0][OUTPUT_CRIT]->activity = false;
-        s->current_irqs[0][OUTPUT_CRIT] = NULL;
+        current_irq = mpic_remove_current_irq(s, OUTPUT_CRIT);
+        current_irq->activity = false;
         break;
 
     case REG_MCHECK_EOI:
-        s->current_irqs[0][OUTPUT_MCHECK]->activity = false;
-        s->current_irqs[0][OUTPUT_MCHECK] = NULL;
+        current_irq = mpic_remove_current_irq(s, OUTPUT_MCHECK);
+        current_irq->activity = false;
         break;
     }
 

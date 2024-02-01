@@ -50,7 +50,7 @@ typedef struct {
 	// spurious vector
 	uint32_t spv;
 
-	irq_config_t *current_irqs[MAX_CPU_SUPPORTED][OUTPUT_IRQ_NUM];
+	GList *current_irq_list[MAX_CPU_SUPPORTED][OUTPUT_IRQ_NUM];
 	irq_config_t *pending_irqs[MAX_CPU_SUPPORTED][OUTPUT_IRQ_NUM];
 
 	QemuMutex mutex;
