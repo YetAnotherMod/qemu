@@ -255,6 +255,23 @@ static void mpic_reset(MpicState *s)
     mpic_update_irq(s);
 }
 
+static inline uint32_t mpic_get_internal_vp_reg(MpicState *s, uint32_t index)
+{
+    return (
+        s->irq[index].vector   << VP_VECTOR_SHIFT      |
+        s->irq[index].priority << VP_PRIORITY_SHIFT    |
+        s->irq[index].activity << VP_ACTIVITY_SHIFT    |
+        s->irq[index].masked   << VP_MASK_SHIFT
+    );
+}
+
+static inline void mpic_set_internal_vp_reg(MpicState *s, uint32_t index, uint32_t val)
+{
+    s->irq[index].vector   = val >> VP_VECTOR_SHIFT;
+    s->irq[index].priority = val >> VP_PRIORITY_SHIFT;
+    s->irq[index].masked   = val >> VP_MASK_SHIFT;
+}
+
 static uint32_t mpic_return_current_irq(MpicState *s, output_type_t type)
 {
     qemu_mutex_lock(&s->mutex);
@@ -367,36 +384,16 @@ static uint32_t mpic_dcr_read (void *opaque, int dcrn)
         return s->vitc_mcheck_border << VITC_MCHECK_SHIFT | s->vitc_crit_border;
 
     case REG_IPI_VP_0:
-        return (
-            s->irq[IPI_0_INDEX].vector   << VP_VECTOR_SHIFT      |
-            s->irq[IPI_0_INDEX].priority << VP_PRIORITY_SHIFT    |
-            s->irq[IPI_0_INDEX].activity << VP_ACTIVITY_SHIFT    |
-            s->irq[IPI_0_INDEX].masked   << VP_MASK_SHIFT
-        );
+        return mpic_get_internal_vp_reg(s, IPI_0_INDEX);
 
     case REG_IPI_VP_1:
-        return (
-            s->irq[IPI_1_INDEX].vector   << VP_VECTOR_SHIFT      |
-            s->irq[IPI_1_INDEX].priority << VP_PRIORITY_SHIFT    |
-            s->irq[IPI_1_INDEX].activity << VP_ACTIVITY_SHIFT    |
-            s->irq[IPI_1_INDEX].masked   << VP_MASK_SHIFT
-        );
+        return mpic_get_internal_vp_reg(s, IPI_1_INDEX);
 
     case REG_IPI_VP_2:
-        return (
-            s->irq[IPI_2_INDEX].vector   << VP_VECTOR_SHIFT      |
-            s->irq[IPI_2_INDEX].priority << VP_PRIORITY_SHIFT    |
-            s->irq[IPI_2_INDEX].activity << VP_ACTIVITY_SHIFT    |
-            s->irq[IPI_2_INDEX].masked   << VP_MASK_SHIFT
-        );
+        return mpic_get_internal_vp_reg(s, IPI_2_INDEX);
 
     case REG_IPI_VP_3:
-        return (
-            s->irq[IPI_3_INDEX].vector   << VP_VECTOR_SHIFT      |
-            s->irq[IPI_3_INDEX].priority << VP_PRIORITY_SHIFT    |
-            s->irq[IPI_3_INDEX].activity << VP_ACTIVITY_SHIFT    |
-            s->irq[IPI_3_INDEX].masked   << VP_MASK_SHIFT
-        );
+        return mpic_get_internal_vp_reg(s, IPI_3_INDEX);
 
     case REG_SPV:
         return s->spv;
@@ -429,36 +426,16 @@ static uint32_t mpic_dcr_read (void *opaque, int dcrn)
         return mpic_get_timer_base(s, TIMER_3_INDEX);
 
     case REG_TIMER_VP_0:
-        return (
-            s->irq[TIMER_0_INDEX].vector   << VP_VECTOR_SHIFT      |
-            s->irq[TIMER_0_INDEX].priority << VP_PRIORITY_SHIFT    |
-            s->irq[TIMER_0_INDEX].activity << VP_ACTIVITY_SHIFT    |
-            s->irq[TIMER_0_INDEX].masked   << VP_MASK_SHIFT
-        );
+        return mpic_get_internal_vp_reg(s, TIMER_0_INDEX);
 
     case REG_TIMER_VP_1:
-        return (
-            s->irq[TIMER_1_INDEX].vector   << VP_VECTOR_SHIFT      |
-            s->irq[TIMER_1_INDEX].priority << VP_PRIORITY_SHIFT    |
-            s->irq[TIMER_1_INDEX].activity << VP_ACTIVITY_SHIFT    |
-            s->irq[TIMER_1_INDEX].masked   << VP_MASK_SHIFT
-        );
+        return mpic_get_internal_vp_reg(s, TIMER_1_INDEX);
 
     case REG_TIMER_VP_2:
-        return (
-            s->irq[TIMER_2_INDEX].vector   << VP_VECTOR_SHIFT      |
-            s->irq[TIMER_2_INDEX].priority << VP_PRIORITY_SHIFT    |
-            s->irq[TIMER_2_INDEX].activity << VP_ACTIVITY_SHIFT    |
-            s->irq[TIMER_2_INDEX].masked   << VP_MASK_SHIFT
-        );
+        return mpic_get_internal_vp_reg(s, TIMER_2_INDEX);
 
     case REG_TIMER_VP_3:
-        return (
-            s->irq[TIMER_3_INDEX].vector   << VP_VECTOR_SHIFT      |
-            s->irq[TIMER_3_INDEX].priority << VP_PRIORITY_SHIFT    |
-            s->irq[TIMER_3_INDEX].activity << VP_ACTIVITY_SHIFT    |
-            s->irq[TIMER_3_INDEX].masked   << VP_MASK_SHIFT
-        );
+        return mpic_get_internal_vp_reg(s, TIMER_3_INDEX);
 
     case REG_TIMER_DEST_0:
         return s->irq[TIMER_0_INDEX].destination;
@@ -535,27 +512,19 @@ static void mpic_dcr_write (void *opaque, int dcrn, uint32_t val)
     // Processor Initialization Register (PINI) ??
 
     case REG_IPI_VP_0:
-        s->irq[IPI_0_INDEX].vector   = val >> VP_VECTOR_SHIFT;
-        s->irq[IPI_0_INDEX].priority = val >> VP_PRIORITY_SHIFT;
-        s->irq[IPI_0_INDEX].masked   = val >> VP_MASK_SHIFT;
+        mpic_set_internal_vp_reg(s, IPI_0_INDEX, val);
         goto end;
 
     case REG_IPI_VP_1:
-        s->irq[IPI_1_INDEX].vector   = val >> VP_VECTOR_SHIFT;
-        s->irq[IPI_1_INDEX].priority = val >> VP_PRIORITY_SHIFT;
-        s->irq[IPI_1_INDEX].masked   = val >> VP_MASK_SHIFT;
+        mpic_set_internal_vp_reg(s, IPI_1_INDEX, val);
         goto end;
 
     case REG_IPI_VP_2:
-        s->irq[IPI_2_INDEX].vector   = val >> VP_VECTOR_SHIFT;
-        s->irq[IPI_2_INDEX].priority = val >> VP_PRIORITY_SHIFT;
-        s->irq[IPI_2_INDEX].masked   = val >> VP_MASK_SHIFT;
+        mpic_set_internal_vp_reg(s, IPI_2_INDEX, val);
         goto end;
 
     case REG_IPI_VP_3:
-        s->irq[IPI_3_INDEX].vector   = val >> VP_VECTOR_SHIFT;
-        s->irq[IPI_3_INDEX].priority = val >> VP_PRIORITY_SHIFT;
-        s->irq[IPI_3_INDEX].masked   = val >> VP_MASK_SHIFT;
+        mpic_set_internal_vp_reg(s, IPI_3_INDEX, val);
         goto end;
 
     case REG_SPV:
@@ -583,27 +552,19 @@ static void mpic_dcr_write (void *opaque, int dcrn, uint32_t val)
         goto end;
 
     case REG_TIMER_VP_0:
-        s->irq[TIMER_0_INDEX].vector   = val >> VP_VECTOR_SHIFT;
-        s->irq[TIMER_0_INDEX].priority = val >> VP_PRIORITY_SHIFT;
-        s->irq[TIMER_0_INDEX].masked   = val >> VP_MASK_SHIFT;
+        mpic_set_internal_vp_reg(s, TIMER_0_INDEX, val);
         goto end;
 
     case REG_TIMER_VP_1:
-        s->irq[TIMER_1_INDEX].vector   = val >> VP_VECTOR_SHIFT;
-        s->irq[TIMER_1_INDEX].priority = val >> VP_PRIORITY_SHIFT;
-        s->irq[TIMER_1_INDEX].masked   = val >> VP_MASK_SHIFT;
+        mpic_set_internal_vp_reg(s, TIMER_1_INDEX, val);
         goto end;
 
     case REG_TIMER_VP_2:
-        s->irq[TIMER_2_INDEX].vector   = val >> VP_VECTOR_SHIFT;
-        s->irq[TIMER_2_INDEX].priority = val >> VP_PRIORITY_SHIFT;
-        s->irq[TIMER_2_INDEX].masked   = val >> VP_MASK_SHIFT;
+        mpic_set_internal_vp_reg(s, TIMER_2_INDEX, val);
         goto end;
 
     case REG_TIMER_VP_3:
-        s->irq[TIMER_3_INDEX].vector   = val >> VP_VECTOR_SHIFT;
-        s->irq[TIMER_3_INDEX].priority = val >> VP_PRIORITY_SHIFT;
-        s->irq[TIMER_3_INDEX].masked   = val >> VP_MASK_SHIFT;
+        mpic_set_internal_vp_reg(s, TIMER_3_INDEX, val);
         goto end;
 
     case REG_TIMER_DEST_0:
