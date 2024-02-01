@@ -30,12 +30,23 @@ typedef struct {
 } irq_config_t;
 
 typedef struct {
+	/* this are used in callbacks */
+    void *state;
+    uint32_t id;
+    /* timer info */
+    uint32_t count;
+    uint32_t active;
+    uint32_t toggle_bit;
+} mpic_timer_t;
+
+typedef struct {
 	/* private */
 	DeviceState parent_obj;
 
 	/* properties */
 	CPUState *cpu;
 	uint32_t baseaddr;
+	uint32_t timer_freq;
 
 	/* public */
 	bool pass_through_8259;
@@ -52,6 +63,10 @@ typedef struct {
 
 	GList *current_irq_list[MAX_CPU_SUPPORTED][OUTPUT_IRQ_NUM];
 	irq_config_t *pending_irqs[MAX_CPU_SUPPORTED][OUTPUT_IRQ_NUM];
+
+	uint32_t freq_reg;
+	QEMUTimer qemu_timer[MAX_TIMER_NUM];
+	mpic_timer_t timer_data[MAX_TIMER_NUM];
 
 	QemuMutex mutex;
 

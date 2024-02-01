@@ -1,4 +1,5 @@
 #include "qemu/osdep.h"
+#include "qemu/timer.h"
 #include "hw/qdev-properties.h"
 #include "cpu.h"
 #include "hw/ppc/ppc.h"
@@ -56,6 +57,26 @@
 
 #define REG_TIMER_FREQ      0x10f0
 
+#define REG_TIMER_COUNT_0   0x1100
+#define REG_TIMER_COUNT_1   0x1140
+#define REG_TIMER_COUNT_2   0x1180
+#define REG_TIMER_COUNT_3   0x11c0
+
+#define REG_TIMER_BASE_0    0x1110
+#define REG_TIMER_BASE_1    0x1150
+#define REG_TIMER_BASE_2    0x1190
+#define REG_TIMER_BASE_3    0x11d0
+
+#define REG_TIMER_VP_0      0x1120
+#define REG_TIMER_VP_1      0x1160
+#define REG_TIMER_VP_2      0x11a0
+#define REG_TIMER_VP_3      0x11e0
+
+#define REG_TIMER_DEST_0    0x1130
+#define REG_TIMER_DEST_1    0x1170
+#define REG_TIMER_DEST_2    0x11b0
+#define REG_TIMER_DEST_3    0x11f0
+
 #define VP_VECTOR_SHIFT     (31 - 31)
 #define VP_PRIORITY_SHIFT   (31 - 15)
 #define VP_SENSE_SHIFT      (31 - 9)
@@ -73,6 +94,10 @@
 #define VITC_BORDER_DEFAULT 0x10
 #define VITC_BORDER_MASK    0x1f
 #define VITC_MCHECK_SHIFT   (31 - 23)
+
+#define TIMER_TOGGLE_SHIFT  (31 - 0)
+#define TIMER_CI_SHIFT      (31 - 0)
+#define TIMER_COUNT_MASK    0x7fffffff
 
 // Implementation dependent parameters (do we have 1 or 3 in this reg?)
 #define MPIC_FRG            (127 << (31 - 15) | 3 << (31 - 23) | 2)
@@ -219,6 +244,14 @@ static void mpic_reset(MpicState *s)
         s->current_irq_list[cpu_index][i] = NULL;
     }
 
+    for (int i = 0; i < MAX_TIMER_NUM; i++) {
+        s->timer_data[i].count = 0;
+        s->timer_data[i].active = 0;
+        s->timer_data[i].toggle_bit = 0;
+
+        timer_del(&s->qemu_timer[i]);
+    }
+
     mpic_update_irq(s);
 }
 
@@ -246,6 +279,58 @@ static uint32_t mpic_return_current_irq(MpicState *s, output_type_t type)
 
     qemu_mutex_unlock(&s->mutex);
     return current_irq->vector;
+}
+
+static uint32_t mpic_get_timer_count(MpicState *s, uint32_t index)
+{
+    uint32_t count = 0;
+
+    qemu_mutex_lock(&s->mutex);
+
+    if (timer_pending(s->qemu_timer)) {
+        count =
+            timer_expire_time_ns(s->qemu_timer) - qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    }
+
+    qemu_mutex_unlock(&s->mutex);
+
+    return s->timer_data[index - TIMER_0_INDEX].toggle_bit << TIMER_TOGGLE_SHIFT | count;
+}
+
+static inline uint32_t mpic_get_timer_base(MpicState *s, uint32_t index)
+{
+    uint32_t val;
+
+    val = s->timer_data[index - TIMER_0_INDEX].active ? 0 : 1;
+    val <<= TIMER_CI_SHIFT;
+
+    val |= s->timer_data[index - TIMER_0_INDEX].count;
+
+    return val;
+}
+
+static void mpic_set_timer_base(MpicState *s, uint32_t index, uint32_t new_val)
+{
+    s->timer_data[index - TIMER_0_INDEX].count = new_val & TIMER_COUNT_MASK;
+
+    if (new_val & (1 << TIMER_CI_SHIFT)) {
+        /* stop active timer */
+        if (s->timer_data[index - TIMER_0_INDEX].active) {
+            timer_del(&s->qemu_timer[index - TIMER_0_INDEX]);
+        }
+
+        s->timer_data[index - TIMER_0_INDEX].active = false;
+    } else {
+        /* start inactive timer */
+        if (!s->timer_data[index - TIMER_0_INDEX].active) {
+            timer_mod(&s->qemu_timer[index - TIMER_0_INDEX],
+                      qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+                      muldiv64(s->timer_data[index - TIMER_0_INDEX].count,
+                               NANOSECONDS_PER_SECOND, s->timer_freq));
+        }
+
+        s->timer_data[index - TIMER_0_INDEX].active = true;
+    }
 }
 
 static uint32_t mpic_dcr_read (void *opaque, int dcrn)
@@ -315,6 +400,77 @@ static uint32_t mpic_dcr_read (void *opaque, int dcrn)
 
     case REG_SPV:
         return s->spv;
+
+    case REG_TIMER_FREQ:
+        return s->freq_reg;
+
+    case REG_TIMER_COUNT_0:
+        return mpic_get_timer_count(s, TIMER_0_INDEX);
+
+    case REG_TIMER_COUNT_1:
+        return mpic_get_timer_count(s, TIMER_1_INDEX);
+
+    case REG_TIMER_COUNT_2:
+        return mpic_get_timer_count(s, TIMER_2_INDEX);
+
+    case REG_TIMER_COUNT_3:
+        return mpic_get_timer_count(s, TIMER_3_INDEX);
+
+    case REG_TIMER_BASE_0:
+        return mpic_get_timer_base(s, TIMER_0_INDEX);
+
+    case REG_TIMER_BASE_1:
+        return mpic_get_timer_base(s, TIMER_1_INDEX);
+
+    case REG_TIMER_BASE_2:
+        return mpic_get_timer_base(s, TIMER_2_INDEX);
+
+    case REG_TIMER_BASE_3:
+        return mpic_get_timer_base(s, TIMER_3_INDEX);
+
+    case REG_TIMER_VP_0:
+        return (
+            s->irq[TIMER_0_INDEX].vector   << VP_VECTOR_SHIFT      |
+            s->irq[TIMER_0_INDEX].priority << VP_PRIORITY_SHIFT    |
+            s->irq[TIMER_0_INDEX].activity << VP_ACTIVITY_SHIFT    |
+            s->irq[TIMER_0_INDEX].masked   << VP_MASK_SHIFT
+        );
+
+    case REG_TIMER_VP_1:
+        return (
+            s->irq[TIMER_1_INDEX].vector   << VP_VECTOR_SHIFT      |
+            s->irq[TIMER_1_INDEX].priority << VP_PRIORITY_SHIFT    |
+            s->irq[TIMER_1_INDEX].activity << VP_ACTIVITY_SHIFT    |
+            s->irq[TIMER_1_INDEX].masked   << VP_MASK_SHIFT
+        );
+
+    case REG_TIMER_VP_2:
+        return (
+            s->irq[TIMER_2_INDEX].vector   << VP_VECTOR_SHIFT      |
+            s->irq[TIMER_2_INDEX].priority << VP_PRIORITY_SHIFT    |
+            s->irq[TIMER_2_INDEX].activity << VP_ACTIVITY_SHIFT    |
+            s->irq[TIMER_2_INDEX].masked   << VP_MASK_SHIFT
+        );
+
+    case REG_TIMER_VP_3:
+        return (
+            s->irq[TIMER_3_INDEX].vector   << VP_VECTOR_SHIFT      |
+            s->irq[TIMER_3_INDEX].priority << VP_PRIORITY_SHIFT    |
+            s->irq[TIMER_3_INDEX].activity << VP_ACTIVITY_SHIFT    |
+            s->irq[TIMER_3_INDEX].masked   << VP_MASK_SHIFT
+        );
+
+    case REG_TIMER_DEST_0:
+        return s->irq[TIMER_0_INDEX].destination;
+
+    case REG_TIMER_DEST_1:
+        return s->irq[TIMER_1_INDEX].destination;
+
+    case REG_TIMER_DEST_2:
+        return s->irq[TIMER_2_INDEX].destination;
+
+    case REG_TIMER_DEST_3:
+        return s->irq[TIMER_3_INDEX].destination;
     }
 
     // FIXME: this registers are per-cpu so handle it address and current CPU
@@ -405,6 +561,67 @@ static void mpic_dcr_write (void *opaque, int dcrn, uint32_t val)
     case REG_SPV:
         s->spv = val & SPV_VECTOR_MASK;
         goto end;
+
+    case REG_TIMER_FREQ:
+        s->freq_reg = val;
+        goto end;
+
+    case REG_TIMER_BASE_0:
+        mpic_set_timer_base(s, TIMER_0_INDEX, val);
+        goto end;
+
+    case REG_TIMER_BASE_1:
+        mpic_set_timer_base(s, TIMER_1_INDEX, val);
+        goto end;
+
+    case REG_TIMER_BASE_2:
+        mpic_set_timer_base(s, TIMER_2_INDEX, val);
+        goto end;
+
+    case REG_TIMER_BASE_3:
+        mpic_set_timer_base(s, TIMER_3_INDEX, val);
+        goto end;
+
+    case REG_TIMER_VP_0:
+        s->irq[TIMER_0_INDEX].vector   = val >> VP_VECTOR_SHIFT;
+        s->irq[TIMER_0_INDEX].priority = val >> VP_PRIORITY_SHIFT;
+        s->irq[TIMER_0_INDEX].masked   = val >> VP_MASK_SHIFT;
+        goto end;
+
+    case REG_TIMER_VP_1:
+        s->irq[TIMER_1_INDEX].vector   = val >> VP_VECTOR_SHIFT;
+        s->irq[TIMER_1_INDEX].priority = val >> VP_PRIORITY_SHIFT;
+        s->irq[TIMER_1_INDEX].masked   = val >> VP_MASK_SHIFT;
+        goto end;
+
+    case REG_TIMER_VP_2:
+        s->irq[TIMER_2_INDEX].vector   = val >> VP_VECTOR_SHIFT;
+        s->irq[TIMER_2_INDEX].priority = val >> VP_PRIORITY_SHIFT;
+        s->irq[TIMER_2_INDEX].masked   = val >> VP_MASK_SHIFT;
+        goto end;
+
+    case REG_TIMER_VP_3:
+        s->irq[TIMER_3_INDEX].vector   = val >> VP_VECTOR_SHIFT;
+        s->irq[TIMER_3_INDEX].priority = val >> VP_PRIORITY_SHIFT;
+        s->irq[TIMER_3_INDEX].masked   = val >> VP_MASK_SHIFT;
+        goto end;
+
+    case REG_TIMER_DEST_0:
+        s->irq[TIMER_0_INDEX].destination = val;
+        goto end;
+
+    case REG_TIMER_DEST_1:
+        s->irq[TIMER_1_INDEX].destination = val;
+        goto end;
+
+    case REG_TIMER_DEST_2:
+        s->irq[TIMER_2_INDEX].destination = val;
+        goto end;
+
+    case REG_TIMER_DEST_3:
+        s->irq[TIMER_3_INDEX].destination = val;
+        goto end;
+
     }
 
     // FIXME: this registers are per-cpu so handle it address and current CPU
@@ -454,6 +671,26 @@ static void mpic_input_irq(void *opaque, int n, int level)
     mpic_update_irq(s);
 }
 
+static void mpic_timer_expired(void *opaque)
+{
+    mpic_timer_t *timer = opaque;
+    MpicState *s = timer->state;
+
+    qemu_mutex_lock(&s->mutex);
+
+    timer->toggle_bit = timer->toggle_bit ? 0 : 1;
+    s->irq[TIMER_0_INDEX + timer->id].pending = true;
+
+    if (timer->active) {
+        timer_mod(&s->qemu_timer[timer->id], qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
+                  muldiv64(timer->count, NANOSECONDS_PER_SECOND, s->timer_freq));
+    }
+
+    qemu_mutex_unlock(&s->mutex);
+
+    mpic_update_irq(s);
+}
+
 static void mpic_device_realize(DeviceState *dev, Error **errp)
 {
     MpicState *s = MPIC(dev);
@@ -461,6 +698,13 @@ static void mpic_device_realize(DeviceState *dev, Error **errp)
     CPUPPCState *env = &cpu->env;
     uint32_t base = s->baseaddr;
     int i;
+
+    for (i = 0; i < MAX_TIMER_NUM; i++) {
+        s->timer_data[i].state = s;
+        s->timer_data[i].id = i;
+        timer_init_ns(&s->qemu_timer[i], QEMU_CLOCK_VIRTUAL, mpic_timer_expired,
+                      &s->timer_data[i]);
+    }
 
     qemu_mutex_init(&s->mutex);
 
@@ -515,6 +759,7 @@ static void mpic_device_reset(DeviceState *dev)
 static Property mpic_device_properties[] = {
     DEFINE_PROP_LINK("cpu-state", MpicState, cpu, TYPE_CPU, CPUState *),
     DEFINE_PROP_UINT32("baseaddr", MpicState, baseaddr, 0xffc00000),
+    DEFINE_PROP_UINT32("timer-freq", MpicState, timer_freq, 100*1000*1000),
     DEFINE_PROP_END_OF_LIST(),
 };
 
