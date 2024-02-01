@@ -269,9 +269,11 @@ static void mt174_init(MachineState *machine)
     MT174MachineState *s = MT174_MACHINE(machine);
     SysBusDevice *busdev;
 
+    const uint32_t cpu_freq = 200 * 1000 * 1000;
+
     /* init CPUs */
     s->cpu = POWERPC_CPU(cpu_create(machine->cpu_type));
-    ppc_booke_timers_init(s->cpu, 200000000, 0);
+    ppc_booke_timers_init(s->cpu, cpu_freq, 0);
 
     CPUPPCState *env = &s->cpu->env;
     ppc_dcr_init(env, dcr_read_error, dcr_write_error);
@@ -308,6 +310,7 @@ static void mt174_init(MachineState *machine)
 
     object_initialize_child(OBJECT(s), "mpic", &s->mpic, TYPE_MPIC);
     object_property_set_int(OBJECT(&s->mpic), "baseaddr", 0xffc00000, &error_fatal);
+    object_property_set_int(OBJECT(&s->mpic), "timer-freq", cpu_freq / 8, &error_fatal);
     object_property_set_link(OBJECT(&s->mpic), "cpu-state", OBJECT(s->cpu), &error_fatal);
     qdev_realize(DEVICE(&s->mpic), NULL, &error_fatal);
     qdev_connect_gpio_out_named(DEVICE(&s->mpic), "non_crit_int", 0,
