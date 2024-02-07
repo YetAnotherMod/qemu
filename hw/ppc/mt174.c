@@ -151,6 +151,10 @@ static void dcr_ddr_mclfir_register(CPUPPCState *env, uint32_t base)
 
 static uint32_t ddr_plb6mcif2_dcr_read (void *opaque, int dcrn)
 {
+    if (dcrn == 0x80050020) {
+        return 0x80000000;
+    }
+
     return 0;
 }
 
