@@ -6,6 +6,7 @@
 #include "cpu.h"
 #include "sysemu/reset.h"
 #include "sysemu/sysemu.h"
+#include "sysemu/block-backend.h"
 #include "hw/qdev-properties.h"
 #include "hw/ppc/ppc.h"
 #include "hw/ppc/dcr_mpic.h"
@@ -719,22 +720,34 @@ static void mm7705_init(MachineState *machine)
         memory_region_add_subregion(get_system_memory(), 0x103c061000,
                                     sysbus_mmio_get_region(busdev, 0));
 
-        DeviceState *flash_dev = qdev_new("m25p32");
         DriveInfo *dinfo = drive_get(IF_MTD, 0, 0);
         if (dinfo) {
+            DeviceState *flash_dev;
             struct BlockBackend *blk = blk_by_legacy_dinfo(dinfo);
-            qdev_prop_set_drive_err(flash_dev, "drive",
-                                    blk,
-                                    &error_fatal);
-        }
-        // Our flash has 1 dummy cycle (or at least with this value it works)
-        // So we take default value and set dummy cycles to 1
-        object_property_set_int(OBJECT(flash_dev), "nonvolatile-cfg", 0x1fff, &error_fatal);
-        qdev_realize(flash_dev, BUS(s->spi[0].ssi), &error_fatal);
 
-        // Connect spi_flash chip select (cs pin) to 2nd pin of gpio1
-        qdev_connect_gpio_out(s->lsif1_gpio[1], 2,
-                              qdev_get_gpio_in_named(flash_dev, SSI_GPIO_CS, 0));
+            switch (blk_getlength(blk)) {
+            default:
+            case 4 * MiB:
+                flash_dev = qdev_new("m25p32");
+                break;
+
+            case 16 * MiB:
+                flash_dev = qdev_new("n25q128a13");
+                break;
+            }
+
+            qdev_prop_set_drive_err(flash_dev, "drive", blk, &error_fatal);
+
+            // Our flash has 1 dummy cycle (or at least with this value it works)
+            // So we take default value and set dummy cycles to 1
+            object_property_set_int(OBJECT(flash_dev), "nonvolatile-cfg", 0x1fff,
+                                    &error_fatal);
+            qdev_realize(flash_dev, BUS(s->spi[0].ssi), &error_fatal);
+
+            // Connect spi_flash chip select (cs pin) to 2nd pin of gpio1
+            qdev_connect_gpio_out(s->lsif1_gpio[1], 2,
+                                  qdev_get_gpio_in_named(flash_dev, SSI_GPIO_CS, 0));
+        }
     }
 
     {
