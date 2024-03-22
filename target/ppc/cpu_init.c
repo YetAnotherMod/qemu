@@ -2616,7 +2616,8 @@ POWERPC_FAMILY(476FP)(ObjectClass *oc, void *data)
         PPC_RFDI |
         PPC_DCR |
         PPC_DCRX |
-        PPC_MFTB;
+        PPC_MFTB |
+        PPC_405_MAC;
 
     pcc->insns_flags2 = PPC2_476_TLB | PPC2_ISA205 | PPC2_FP_CVT_S64;
 
