@@ -50,13 +50,13 @@ typedef struct {
 static int dcr_read_error(int dcrn)
 {
     printf("DCR: error reading register with address 0x%x\n", dcrn);
-    return -1;
+    return 0;
 }
 
 static int dcr_write_error(int dcrn)
 {
     printf("DCR: error writing register with address 0x%x\n", dcrn);
-    return -1;
+    return 0;
 }
 
 static uint32_t plb4arb8m_dcr_read (void *opaque, int dcrn)
