@@ -2608,7 +2608,6 @@ POWERPC_FAMILY(476FP)(ObjectClass *oc, void *data)
         PPC_CACHE_DCBZ |
         PPC_CACHE_DCBA |
         PPC_WRTEE |
-        PPC_440_SPEC |
         PPC_MFAPIDI |
         PPC_TLBIVAX |
         PPC_4xx_COMMON |
