@@ -812,13 +812,21 @@ static void greth_reset(DeviceState *dev)
     s->mdio = MDIO_LINKFAIL;
     s->edcl_sequnce_counter = 0;
 
-    s->mac_msb = (uint32_t)s->conf.macaddr.a[0] << 8;
-    s->mac_msb |= (uint32_t)s->conf.macaddr.a[1] << 0;
+    s->mac_msb = (uint32_t)s->conf.macaddr.a[0] << 8U;
+    s->mac_msb |= (uint32_t)s->conf.macaddr.a[1] << 0U;
 
-    s->mac_lsb = (uint32_t)s->conf.macaddr.a[2] << 24;
-    s->mac_lsb |= (uint32_t)s->conf.macaddr.a[3] << 16;
-    s->mac_lsb |= (uint32_t)s->conf.macaddr.a[4] << 8;
-    s->mac_lsb |= (uint32_t)s->conf.macaddr.a[5] << 0;
+    s->mac_lsb = (uint32_t)s->conf.macaddr.a[2] << 24U;
+    s->mac_lsb |= (uint32_t)s->conf.macaddr.a[3] << 16U;
+    s->mac_lsb |= (uint32_t)s->conf.macaddr.a[4] << 8U;
+    s->mac_lsb |= (uint32_t)s->conf.macaddr.a[5] << 0U;
+
+    s->edcl_mac_msb = (uint32_t)s->edcl_mac.a[0] << 8U;
+    s->edcl_mac_msb |= (uint32_t)s->edcl_mac.a[1] << 0U;
+
+    s->edcl_mac_lsb = (uint32_t)s->edcl_mac.a[2] << 24U;
+    s->edcl_mac_lsb |= (uint32_t)s->edcl_mac.a[3] << 16U;
+    s->edcl_mac_lsb |= (uint32_t)s->edcl_mac.a[4] << 8U;
+    s->edcl_mac_lsb |= (uint32_t)s->edcl_mac.a[5] << 0U;
 }
 
 static const MemoryRegionOps greth_ops = {
