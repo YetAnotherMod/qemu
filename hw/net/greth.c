@@ -558,21 +558,26 @@ static ssize_t greth_receive(NetClientState *nc, const uint8_t *buf, size_t len)
         return -1;
     }
 
+    uint32_t irq_enabled = desc.irq_enabled;
+    uint32_t wrap = desc.wrap;
+
     desc.length = len;
     desc.enabled = 0;
+    desc.wrap = 0;
+    desc.irq_enabled = 0;
 
     if (write_recv_desc(s, s->recv_desc, &desc)) {
         s->status |= STATUS_RECV_DMA_ERROR;
         return -1;
     }
 
-    if (desc.irq_enabled) {
+    if (irq_enabled) {
         s->status |= STATUS_RECV_IRQ;
         greth_update_irq(s);
     }
 
     // change address
-    if (desc.wrap) {
+    if (wrap) {
         s->recv_desc &= DESCR_PTR_BASE_MASK;
     } else {
         uint32_t offset = s->recv_desc & DESCR_PTR_OFFSET_MASK;
@@ -616,14 +621,16 @@ static void greth_send_all(GRETHState *s)
             greth_update_irq(s);
         }
 
-        desc.enabled = 0;
+        uint32_t wrap = desc.wrap;
+
+        desc.cmd = 0;
         if (write_send_desc(s, addr, &desc)) {
             s->status |= STATUS_SEND_DMA_ERROR;
             return;
         }
 
         // change address
-        if (desc.wrap) {
+        if (wrap) {
             s->send_desc &= DESCR_PTR_BASE_MASK;
         } else {
             uint32_t offset = s->send_desc & DESCR_PTR_OFFSET_MASK;
