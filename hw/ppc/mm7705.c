@@ -50,7 +50,11 @@ typedef struct {
 #define MM7705_MACHINE(obj) \
     OBJECT_CHECK(MM7705MachineState, obj, TYPE_MM7705_MACHINE)
 
-#define MM7705_BOOT_CFG_DEFVAL 0x16
+#define MM7705_SECOND_CORE_DISABLED 1
+#define MM7705_SELFTEST_DISABLED 2
+#define MM7705_EDCL_DISABLED 4
+#define MM7705_BOOT_CFG_DEFVAL \
+    (1 << MM7705_SECOND_CORE_DISABLED | 1 << MM7705_SELFTEST_DISABLED)
 
 #define MM7705_DDR_SLOTS_CNT 2
 
@@ -637,6 +641,8 @@ static void mm7705_init(MachineState *machine)
         qdev_prop_set_macaddr(DEVICE(&s->greth[2]), "edcl_mac", edcl_mac[2]);
         /* set ip 192.168.1.0 as one number */
         qdev_prop_set_uint32(DEVICE(&s->greth[2]), "edcl_ip", 0xc0a80100);
+        qdev_prop_set_uint32(DEVICE(&s->greth[2]), "edcl_disabled",
+                                    s->boot_cfg & (1 << MM7705_EDCL_DISABLED));
         sysbus_realize(SYS_BUS_DEVICE(&s->greth[2]), &error_fatal);
         busdev = SYS_BUS_DEVICE(&s->greth[2]);
         memory_region_add_subregion(get_system_memory(), 0x103c037000,
@@ -665,6 +671,8 @@ static void mm7705_init(MachineState *machine)
         qdev_prop_set_macaddr(DEVICE(&s->gb_greth[1]), "edcl_mac", edcl_mac[4]);
         /* set ip 192.168.1.48 as one number */
         qdev_prop_set_uint32(DEVICE(&s->gb_greth[1]), "edcl_ip", 0xc0a80130);
+        qdev_prop_set_uint32(DEVICE(&s->gb_greth[1]), "edcl_disabled",
+                                    s->boot_cfg & (1 << MM7705_EDCL_DISABLED));
         sysbus_realize(SYS_BUS_DEVICE(&s->gb_greth[1]), &error_fatal);
         busdev = SYS_BUS_DEVICE(&s->gb_greth[1]);
         memory_region_add_subregion(get_system_memory(), 0x103c034000,

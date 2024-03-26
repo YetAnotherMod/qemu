@@ -415,6 +415,7 @@ static void mt174_init(MachineState *machine)
     qdev_prop_set_macaddr(DEVICE(&s->greth[0]), "edcl_mac", edcl_mac[0]);
     /* set ip 192.168.1.48 as one number */
     qdev_prop_set_uint32(DEVICE(&s->greth[0]), "edcl_ip", 0xc0a80130);
+    qdev_prop_set_uint32(DEVICE(&s->greth[0]), "edcl_disabled", 0);
     sysbus_realize(SYS_BUS_DEVICE(&s->greth[0]), &error_fatal);
     busdev = SYS_BUS_DEVICE(&s->greth[0]);
     memory_region_add_subregion(get_system_memory(), 0x20c002a000,
@@ -475,6 +476,7 @@ static void mt174_init(MachineState *machine)
     qdev_prop_set_macaddr(DEVICE(&s->greth[1]), "edcl_mac", edcl_mac[1]);
     /* set ip 192.168.1.49 as one number */
     qdev_prop_set_uint32(DEVICE(&s->greth[1]), "edcl_ip", 0xc0a80131);
+    qdev_prop_set_uint32(DEVICE(&s->greth[1]), "edcl_disabled", 0);
     sysbus_realize(SYS_BUS_DEVICE(&s->greth[1]), &error_fatal);
     busdev = SYS_BUS_DEVICE(&s->greth[1]);
     memory_region_add_subregion(get_system_memory(), 0x20c003a000,
