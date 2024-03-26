@@ -813,6 +813,10 @@ static void greth_reset(DeviceState *dev)
     greth_soft_reset(s);
     greth_phy_reset(s);
 
+    if (s->edcl_disabled) {
+        s->ctrl |= CONTROL_EDCL_DISABLE;
+    }
+
     s->status = 0;
     s->send_desc = 0;
     s->recv_desc = 0;
@@ -881,6 +885,7 @@ static Property greth_properties[] = {
     DEFINE_NIC_PROPERTIES(GRETHState, conf),
     DEFINE_PROP_MACADDR("edcl_mac", GRETHState, edcl_mac),
     DEFINE_PROP_UINT32("edcl_ip", GRETHState, edcl_ip, 0),
+    DEFINE_PROP_UINT32("edcl_disabled", GRETHState, edcl_disabled, 1),
     DEFINE_PROP_END_OF_LIST(),
 };
 

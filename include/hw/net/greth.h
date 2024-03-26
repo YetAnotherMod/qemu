@@ -31,6 +31,7 @@ struct GRETHState {
     uint32_t edcl_ip;
     uint32_t edcl_mac_msb;
     uint32_t edcl_mac_lsb;
+    uint32_t edcl_disabled;
 
     qemu_irq irq;
 };
