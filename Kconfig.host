@@ -49,3 +49,6 @@ config VFIO_USER_SERVER_ALLOWED
 
 config VIRTSW
     bool
+
+config VIRTMKO
+    bool

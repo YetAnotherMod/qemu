@@ -1896,6 +1896,12 @@ if not get_option('virtsw').auto() or have_system
                        method: 'pkg-config')
 endif
 
+virtmko = not_found
+if not get_option('virtmko').auto() or have_system
+  virtmko = dependency('virtmko', required: get_option('virtmko'),
+                       method: 'pkg-config')
+endif
+
 #################
 # config-host.h #
 #################
@@ -2154,6 +2160,7 @@ config_host_data.set('CONFIG_VNC_JPEG', jpeg.found())
 config_host_data.set('CONFIG_VNC_SASL', sasl.found())
 config_host_data.set('CONFIG_VIRTFS', have_virtfs)
 config_host_data.set('CONFIG_VTE', vte.found())
+config_host_data.set('CONFIG_VIRTMKO', virtmko.found())
 config_host_data.set('CONFIG_XKBCOMMON', xkbcommon.found())
 config_host_data.set('CONFIG_KEYUTILS', keyutils.found())
 config_host_data.set('CONFIG_GETTID', has_gettid)
@@ -2852,7 +2859,8 @@ host_kconfig = \
   (have_pvrdma ? ['CONFIG_PVRDMA=y'] : []) + \
   (multiprocess_allowed ? ['CONFIG_MULTIPROCESS_ALLOWED=y'] : []) + \
   (vfio_user_server_allowed ? ['CONFIG_VFIO_USER_SERVER_ALLOWED=y'] : []) + \
-  (virtsw.found() ? ['CONFIG_VIRTSW=y'] : [])
+  (virtsw.found() ? ['CONFIG_VIRTSW=y'] : []) + \
+  (virtmko.found() ? ['CONFIG_VIRTMKO=y'] : [])
 
 ignored = [ 'TARGET_XML_FILES', 'TARGET_ABI_DIR', 'TARGET_ARCH' ]
 
@@ -4324,6 +4332,7 @@ summary_info += {'FUSE lseek':        fuse_lseek.found()}
 summary_info += {'selinux':           selinux}
 summary_info += {'libdw':             libdw}
 summary_info += {'virtsw support':  virtsw}
+summary_info += {'virtmko support':  virtmko}
 summary(summary_info, bool_yn: true, section: 'Dependencies')
 
 if not supported_cpus.contains(cpu)
