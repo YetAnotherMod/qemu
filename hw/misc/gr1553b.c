@@ -27,6 +27,8 @@
 #define REG_BC_TRANS_LIST_CURR_PTR 0x68
 #define REG_BC_TRANS_ASYNC_CURR_PTR 0x6c
 
+#define IRQ_BCEV (1 << 0)
+
 #define BC_STAT_CFG_BCSUP (1 << 31)
 /* controller supports all bc features */
 #define BC_STAT_CFG_BCFEAT (0x7 << 28)
@@ -82,6 +84,18 @@ typedef union {
 
 typedef union {
     struct {
+        uint32_t tfrst : 3;
+        uint32_t : 1;
+        uint32_t retcnt : 4;
+        uint32_t rtst : 8;
+        uint32_t rt2st : 8;
+        uint32_t : 8;
+    };
+    uint32_t val;
+} bc_result_t;
+
+typedef union {
+    struct {
         uint32_t stcc : 8;
         uint32_t rtcc : 8;
         uint32_t rt2cc : 8;
@@ -102,7 +116,7 @@ typedef union {
         bc_word0_t word0;
         bc_word1_t word1;
         uint32_t addr;
-        uint32_t result;
+        bc_result_t result;
     };
     struct {
         bc_branch_cond_t condition;
@@ -125,7 +139,7 @@ static int read_bc_trans_desc(AddressSpace *as, dma_addr_t addr, bc_trans_desc_t
 
 static int write_bc_trans_desc(AddressSpace *as, dma_addr_t addr, bc_trans_desc_t *desc)
 {
-    desc->result = be32_to_cpu(desc->result);
+    desc->result.val = be32_to_cpu(desc->result.val);
 
     if (dma_memory_write(as, addr + offsetof(bc_trans_desc_t, result), &desc->result,
                          sizeof(uint32_t), MEMTXATTRS_UNSPECIFIED)) {
@@ -149,6 +163,17 @@ enum {
     INTERNAL_SIGNAL_NONE,
     INTERNAL_SIGNAL_SUSPEND = 0b01,
     INTERNAL_SIGNAL_STOP = 0b11,
+};
+
+enum {
+    BC_TFRST_SUCCESS,
+    BC_TFRST_RT_NO_REPSONSE,
+    BC_TFRST_SECOND_RT_NO_REPSONSE,
+    BC_TFRST_RT_RESPONSE_HAD_ERROR,
+    BC_TFRST_PROTOCOL_ERROR,
+    BC_TFRST_DESC_INVALID,
+    BC_TFRST_DMA_ERROR,
+    BC_TFRST_LOOPBACK_FAIL,
 };
 
 static void gr1553b_update_irq(GR1553BState *s)
@@ -210,39 +235,86 @@ static int get_format(bc_word1_t word1)
 
 static void exec_msg_desc(GR1553BState *s, bc_trans_desc_t *desc)
 {
-    assert(!desc->word0.wtrig);
-    assert(!desc->word0.excl);
+    /* this bits are not supported yet */
+    assert(desc->word0.wtrig == 0);
+    assert(desc->word0.retmd == 0);
+    assert(desc->word0.nret == 0);
+    assert(desc->word0.stbus == 0);
+    assert(desc->word0.gap == 0);
 
-    switch (get_format(desc->word1)) {
-    case 1:
-        printf("this is format 1\n");
-        break;
+    if (desc->word1.dum) {
+        desc->result.val = 0;
+        desc->result.tfrst = BC_TFRST_SUCCESS;
+    } else {
+        desc->result.val = 0;
 
-    case 2:
-        printf("this is format 2\n");
-        break;
+        switch (get_format(desc->word1)) {
+        case 1:
+            printf("this is format 1\n");
+            break;
 
-    default:
-        g_assert_not_reached();
+        case 2:
+            printf("this is format 2\n");
+            break;
+
+        default:
+            g_assert_not_reached();
+        }
+    }
+
+    if (desc->result.tfrst) {
+        if (desc->word0.irqe) {
+            qatomic_or(&s->reg_irq, IRQ_BCEV);
+            gr1553b_update_irq(s);
+        }
+
+        if (desc->word0.suse) {
+            qemu_mutex_lock(&s->internal_mutex);
+            s->internal_signal |= INTERNAL_SIGNAL_SUSPEND;
+            qemu_mutex_unlock(&s->internal_mutex);
+        }
+    } else {
+        if (desc->word0.irqn) {
+            qatomic_or(&s->reg_irq, IRQ_BCEV);
+            gr1553b_update_irq(s);
+        }
+
+        if (desc->word0.susn) {
+            qemu_mutex_lock(&s->internal_mutex);
+            s->internal_signal |= INTERNAL_SIGNAL_SUSPEND;
+            qemu_mutex_unlock(&s->internal_mutex);
+        }
     }
 }
 
 static uint32_t exec_branch_desc(GR1553BState *s, bc_trans_desc_t *desc,
-                                 uint32_t curr_addr)
+                                 uint32_t curr_addr, bc_result_t prev_res)
 {
     uint32_t condition;
     /* default is just next address */
     uint32_t next_addr = curr_addr + sizeof(bc_trans_desc_t);
 
+    /* FIXME: is this correct calculations? and what is the `result`? */
     if (desc->condition.mode) {
-        // and mode
-        // TODO: add.. this.. somehow..
-        g_assert_not_reached();
+        /* AND mode:
+         * - STCC != 0x0
+         * - all bits set in RT2CC,RTCC are set in RT2ST,RTST
+         * - result is in STCC mask
+         */
+        condition = desc->condition.stcc != 0x0 &&
+                    (prev_res.rtst & desc->condition.rtcc) == desc->condition.rtcc &&
+                    (prev_res.rt2st & desc->condition.rt2cc) == desc->condition.rt2cc &&
+                    (prev_res.rtst & desc->condition.stcc) == prev_res.rtst;
     } else {
-        // or mode
-        // TODO: add (desc->condition.rt2cc & rt2st (where to get it?))
-        // TODO: add (desc->condition.rtcc & rtst (where to get it?))
-        condition = desc->condition.stcc;
+        /* OR mode:
+         * - STCC == 0xFF
+         * - any bit set in RT2CC,RTCC is set in RT2ST,RTST
+         * - result is in STCC mask
+         */
+        condition = desc->condition.stcc == 0xff ||
+                    prev_res.rtst & desc->condition.rtcc ||
+                    prev_res.rt2st & desc->condition.rt2cc ||
+                    (prev_res.rtst & desc->condition.stcc) == prev_res.rtst;
     }
 
     if (!condition) {
@@ -250,8 +322,8 @@ static uint32_t exec_branch_desc(GR1553BState *s, bc_trans_desc_t *desc,
     }
 
     if (desc->condition.irqc) {
-        // TODO: interrupt
-        g_assert_not_reached();
+        qatomic_or(&s->reg_irq, IRQ_BCEV);
+        gr1553b_update_irq(s);
     }
 
     if (desc->condition.act) {
@@ -270,6 +342,7 @@ static void *gr1553b_bc_thread(void *opaque)
 {
     GR1553BState *s = GR1553B(opaque);
     bc_trans_desc_t bc_desc;
+    bc_result_t prev_res = { .val = 0 };
 
     while (true) {
         qemu_mutex_lock(&s->bc_mutex);
@@ -284,14 +357,21 @@ static void *gr1553b_bc_thread(void *opaque)
         while (executing) {
             uint32_t curr_addr = s->reg_bc_trans;
 
-            read_bc_trans_desc(&address_space_memory, curr_addr, &bc_desc);
+            if (read_bc_trans_desc(&address_space_memory, curr_addr, &bc_desc)) {
+                /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
+                g_assert_not_reached();
+            }
 
             uint32_t next_addr;
             if (bc_desc.is_branch_desc) {
-                next_addr = exec_branch_desc(s, &bc_desc, curr_addr);
+                next_addr = exec_branch_desc(s, &bc_desc, curr_addr, prev_res);
             } else {
                 exec_msg_desc(s, &bc_desc);
-                write_bc_trans_desc(&address_space_memory, curr_addr, &bc_desc);
+                prev_res.val = bc_desc.result.val;
+                if (write_bc_trans_desc(&address_space_memory, curr_addr, &bc_desc)) {
+                    /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
+                    g_assert_not_reached();
+                }
                 next_addr = curr_addr + sizeof(bc_trans_desc_t);
             }
 
