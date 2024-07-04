@@ -4,6 +4,7 @@
  */
 
 #include "qemu/osdep.h"
+#include "qemu/atomic.h"
 #include "hw/irq.h"
 
 #include "exec/address-spaces.h"
@@ -25,6 +26,15 @@
 #define REG_BC_BUS_SWAP 0x5c
 #define REG_BC_TRANS_LIST_CURR_PTR 0x68
 #define REG_BC_TRANS_ASYNC_CURR_PTR 0x6c
+
+#define BC_STAT_CFG_BCSUP (1 << 31)
+/* controller supports all bc features */
+#define BC_STAT_CFG_BCFEAT (0x7 << 28)
+#define BC_STAT_CFG_BCCHK (1 << 16)
+#define BC_STAT_CFG_SCADL_MASK 0x1f
+#define BC_STAT_CFG_SCADL_OFF 3
+#define BC_STAT_CFG_SCST_MASK 0x7
+#define BC_STAT_CFG_SCST_OFF 0
 
 #define BC_ACT_SCHED_STOP (1 << 2)
 #define BC_ACT_SCHED_SUSPEND (1 << 1)
@@ -85,7 +95,7 @@ typedef union {
 
 typedef union {
     struct {
-        uint32_t desc_type : 1;
+        uint32_t is_branch_desc : 1;
         uint32_t : 31;
     };
     struct {
@@ -127,9 +137,23 @@ static int write_bc_trans_desc(AddressSpace *as, dma_addr_t addr, bc_trans_desc_
 /*
  * controller logic
  */
+enum {
+    BC_SCHED_STOPPED,
+    BC_SCHED_EXECUTING,
+    BC_SCHED_WAITING_TIME_SLOT,
+    BC_SCHED_SUSPENDED,
+    BC_SCHED_WAITING_EXTERN_TRIG,
+};
+
+enum {
+    INTERNAL_SIGNAL_NONE,
+    INTERNAL_SIGNAL_SUSPEND = 0b01,
+    INTERNAL_SIGNAL_STOP = 0b11,
+};
+
 static void gr1553b_update_irq(GR1553BState *s)
 {
-    if (s->reg_irq & s->reg_mask) {
+    if (qatomic_read(&s->reg_irq) & s->reg_mask) {
         qemu_irq_raise(s->irq);
     } else {
         qemu_irq_lower(s->irq);
@@ -203,9 +227,12 @@ static void exec_msg_desc(GR1553BState *s, bc_trans_desc_t *desc)
     }
 }
 
-static bool exec_branch_desc(GR1553BState *s, bc_trans_desc_t *desc)
+static uint32_t exec_branch_desc(GR1553BState *s, bc_trans_desc_t *desc,
+                                 uint32_t curr_addr)
 {
     uint32_t condition;
+    /* default is just next address */
+    uint32_t next_addr = curr_addr + sizeof(bc_trans_desc_t);
 
     if (desc->condition.mode) {
         // and mode
@@ -219,7 +246,7 @@ static bool exec_branch_desc(GR1553BState *s, bc_trans_desc_t *desc)
     }
 
     if (!condition) {
-        return false;
+        return next_addr;
     }
 
     if (desc->condition.irqc) {
@@ -228,36 +255,62 @@ static bool exec_branch_desc(GR1553BState *s, bc_trans_desc_t *desc)
     }
 
     if (desc->condition.act) {
-        s->reg_bc_trans = desc->jump_addr;
+        /* jump to new address */
+        next_addr = desc->jump_addr;
     } else {
-        s->reg_bc_act |= BC_ACT_SCHED_SUSPEND;
+        qemu_mutex_lock(&s->internal_mutex);
+        s->internal_signal |= INTERNAL_SIGNAL_SUSPEND;
+        qemu_mutex_unlock(&s->internal_mutex);
     }
 
-    return true;
+    return next_addr;
 }
 
-static void gr1553b_schedule_start(GR1553BState *s)
+static void *gr1553b_bc_thread(void *opaque)
 {
+    GR1553BState *s = GR1553B(opaque);
     bc_trans_desc_t bc_desc;
 
-    while (1) {
-        read_bc_trans_desc(&address_space_memory, s->reg_bc_trans, &bc_desc);
+    while (true) {
+        qemu_mutex_lock(&s->bc_mutex);
 
-        if (bc_desc.desc_type) {
-            if (!exec_branch_desc(s, &bc_desc)) {
-                s->reg_bc_trans += sizeof(bc_trans_desc_t);
+        qemu_mutex_lock(&s->internal_mutex);
+        /* INFO: there is a possibility that we can get here after bc_mutex was unlocked
+         * but before we update s->bc_scst here it can be readed again */
+        s->bc_scst = BC_SCHED_EXECUTING;
+        qemu_mutex_unlock(&s->internal_mutex);
+
+        int executing = true;
+        while (executing) {
+            uint32_t curr_addr = s->reg_bc_trans;
+
+            read_bc_trans_desc(&address_space_memory, curr_addr, &bc_desc);
+
+            uint32_t next_addr;
+            if (bc_desc.is_branch_desc) {
+                next_addr = exec_branch_desc(s, &bc_desc, curr_addr);
+            } else {
+                exec_msg_desc(s, &bc_desc);
+                write_bc_trans_desc(&address_space_memory, curr_addr, &bc_desc);
+                next_addr = curr_addr + sizeof(bc_trans_desc_t);
             }
-        } else {
-            exec_msg_desc(s, &bc_desc);
 
-            write_bc_trans_desc(&address_space_memory, s->reg_bc_trans, &bc_desc);
-            s->reg_bc_trans += sizeof(bc_trans_desc_t);
-        }
+            if (s->reg_bc_trans == curr_addr) {
+                s->reg_bc_trans = next_addr;
+            }
 
-        if (s->reg_bc_act & (BC_ACT_SCHED_SUSPEND | BC_ACT_SCHED_STOP)) {
-            break;
+            qemu_mutex_lock(&s->internal_mutex);
+            if (s->internal_signal) {
+                s->bc_scst = s->internal_signal == INTERNAL_SIGNAL_SUSPEND ?
+                    BC_SCHED_SUSPENDED : BC_SCHED_STOPPED;
+                s->internal_signal = INTERNAL_SIGNAL_NONE;
+                executing = false;
+            }
+            qemu_mutex_unlock(&s->internal_mutex);
         }
     }
+
+    return NULL;
 }
 
 static uint64_t gr1553b_read(void *opaque, hwaddr offset, unsigned size)
@@ -267,15 +320,16 @@ static uint64_t gr1553b_read(void *opaque, hwaddr offset, unsigned size)
 
     switch (offset) {
     case REG_IRQ:
-        val = s->reg_irq;
+        val = qatomic_read(&s->reg_irq);
         break;
 
     case REG_IRQ_ENABLE:
         val = s->reg_mask;
         break;
 
-    case REG_BC_ACTION:
-        val = s->reg_bc_act;
+    case REG_BC_STATUS_CONFIG:
+        val = BC_STAT_CFG_BCSUP | BC_STAT_CFG_BCFEAT |
+              (s->bc_scst & BC_STAT_CFG_SCST_MASK) << BC_STAT_CFG_SCST_OFF;
         break;
 
     case REG_BC_TRANS_LIST_PTR:
@@ -292,7 +346,7 @@ static void gr1553b_write(void *opaque, hwaddr offset, uint64_t val, unsigned si
 
     switch (offset) {
     case REG_IRQ:
-        s->reg_irq &= ~val;
+        qatomic_and(&s->reg_irq, ~val);
         break;
 
     case REG_IRQ_ENABLE:
@@ -304,11 +358,25 @@ static void gr1553b_write(void *opaque, hwaddr offset, uint64_t val, unsigned si
             break;
         }
 
-        s->reg_bc_act = val;
-
-        if (s->reg_bc_act & BC_ACT_SCHED_START) {
-            gr1553b_schedule_start(s);
+        qemu_mutex_lock(&s->internal_mutex);
+        if (val & BC_ACT_SCHED_STOP) {
+            if (s->bc_scst == BC_SCHED_STOPPED || s->bc_scst == BC_SCHED_SUSPENDED) {
+                s->bc_scst = BC_SCHED_STOPPED;
+            } else {
+                s->internal_signal |= INTERNAL_SIGNAL_STOP;
+            }
+        } else if (val & BC_ACT_SCHED_SUSPEND) {
+            if (s->bc_scst == BC_SCHED_STOPPED || s->bc_scst == BC_SCHED_SUSPENDED) {
+                s->bc_scst = BC_SCHED_SUSPENDED;
+            } else {
+                s->internal_signal |= INTERNAL_SIGNAL_SUSPEND;
+            }
+        } else if (val & BC_ACT_SCHED_START) {
+            if (s->bc_scst == BC_SCHED_STOPPED || s->bc_scst == BC_SCHED_SUSPENDED) {
+                qemu_mutex_unlock(&s->bc_mutex);
+            }
         }
+        qemu_mutex_unlock(&s->internal_mutex);
         break;
 
     case REG_BC_TRANS_LIST_PTR:
@@ -323,8 +391,14 @@ static void gr1553b_reset(DeviceState *dev)
 {
     GR1553BState *s = GR1553B(dev);
 
-    s->reg_irq = 0;
+    /* TODO: how to reset bc thread? */
+
+    qatomic_set(&s->reg_irq, 0);
     s->reg_mask = 0;
+
+    s->reg_bc_trans = 0;
+    s->bc_scst = BC_SCHED_STOPPED;
+    s->internal_signal = INTERNAL_SIGNAL_NONE;
 
     gr1553b_update_irq(s);
 }
@@ -343,6 +417,15 @@ static void gr1553b_realize(DeviceState *dev, Error **errp)
     memory_region_init_io(&s->iomem, OBJECT(dev), &gr1553b_ops, s, "gr1553b", 0x1000);
     sysbus_init_mmio(sbd, &s->iomem);
     sysbus_init_irq(sbd, &s->irq);
+
+    /* internal */
+    qemu_mutex_init(&s->internal_mutex);
+
+    /* create locked mutex and recv/send thread for bc mode */
+    qemu_mutex_init(&s->bc_mutex);
+    qemu_mutex_lock(&s->bc_mutex);
+    qemu_thread_create(&s->bc_thread, "gr1553b_bc_thread", gr1553b_bc_thread, s,
+                       QEMU_THREAD_JOINABLE);
 }
 
 static void gr1553b_class_init(ObjectClass *klass, void *data)

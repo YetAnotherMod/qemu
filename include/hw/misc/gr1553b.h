@@ -2,6 +2,7 @@
 #define GR1553B_H
 
 #include "hw/sysbus.h"
+#include "qemu/thread.h"
 
 struct GR1553BState {
     /*< private >*/
@@ -12,11 +13,18 @@ struct GR1553BState {
 
     qemu_irq irq;
 
-    uint32_t reg_irq;
+    uint32_t reg_irq; /* access using atomics */
     uint32_t reg_mask;
 
-    uint32_t reg_bc_act;
     uint32_t reg_bc_trans;
+
+    /* internal */
+    QemuMutex internal_mutex;
+    int internal_signal; /* access locked by `internal_mutex` */
+    uint32_t bc_scst; /* access locked by `internal_mutex` */
+
+    QemuMutex bc_mutex;
+    QemuThread bc_thread;
 };
 
 typedef struct GR1553BState GR1553BState;
