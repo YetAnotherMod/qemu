@@ -25,6 +25,9 @@ struct GR1553BState {
 
     QemuMutex bc_mutex;
     QemuThread bc_thread;
+
+    /* virtmko */
+    void *vmko_controller;
 };
 
 typedef struct GR1553BState GR1553BState;

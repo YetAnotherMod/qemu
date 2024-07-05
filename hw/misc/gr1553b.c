@@ -12,6 +12,8 @@
 
 #include "hw/misc/gr1553b.h"
 
+#include <virtmko.h>
+
 #define REG_IRQ 0x0
 #define REG_IRQ_ENABLE 0x4
 #define REG_HW_CONFIG 0x10
@@ -233,6 +235,49 @@ static int get_format(bc_word1_t word1)
     return word1.tr ? 2 : 1;
 }
 
+static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
+{
+    desc->result.val = 0;
+
+    vmko_msg msg;
+    msg.nwords = desc->word1.wcmc;
+    msg.subaddr = desc->word1.rtsa1;
+    msg.transmit = desc->word1.tr;
+    msg.addr = desc->word1.rtad1;
+    msg.format = get_format(desc->word1);
+
+    uint32_t size = (msg.nwords ? msg.nwords : 32) * sizeof(uint16_t);
+    switch (msg.format) {
+    case 1:
+        if (dma_memory_read(&address_space_memory, desc->addr, msg.data, size,
+                            MEMTXATTRS_UNSPECIFIED)) {
+            /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
+            g_assert_not_reached();
+        }
+        vmko_send(s->vmko_controller, &msg);
+        if (vmko_receive(s->vmko_controller, &msg) < 0) {
+            desc->result.tfrst = BC_TFRST_RT_NO_REPSONSE;
+        }
+        break;
+
+    case 2:
+        vmko_send(s->vmko_controller, &msg);
+        if (vmko_receive(s->vmko_controller, &msg) < 0) {
+            desc->result.tfrst = BC_TFRST_RT_NO_REPSONSE;
+        } else {
+            if (dma_memory_write(&address_space_memory, desc->addr, msg.data, size,
+                                 MEMTXATTRS_UNSPECIFIED)) {
+                /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
+                g_assert_not_reached();
+            }
+        }
+        break;
+
+    default:
+        g_assert_not_reached();
+    }
+}
+
 static void exec_msg_desc(GR1553BState *s, bc_trans_desc_t *desc)
 {
     /* this bits are not supported yet */
@@ -246,20 +291,7 @@ static void exec_msg_desc(GR1553BState *s, bc_trans_desc_t *desc)
         desc->result.val = 0;
         desc->result.tfrst = BC_TFRST_SUCCESS;
     } else {
-        desc->result.val = 0;
-
-        switch (get_format(desc->word1)) {
-        case 1:
-            printf("this is format 1\n");
-            break;
-
-        case 2:
-            printf("this is format 2\n");
-            break;
-
-        default:
-            g_assert_not_reached();
-        }
+        bc_send_msg(s, desc);
     }
 
     if (desc->result.tfrst) {
@@ -500,6 +532,12 @@ static void gr1553b_realize(DeviceState *dev, Error **errp)
 
     /* internal */
     qemu_mutex_init(&s->internal_mutex);
+
+    /* virtmko */
+    s->vmko_controller = vmko_new();
+    vmko_set_ip_port(s->vmko_controller, "224.5.0.141:3800");
+    vmko_set_timeout(s->vmko_controller, 1);
+    vmko_start(s->vmko_controller);
 
     /* create locked mutex and recv/send thread for bc mode */
     qemu_mutex_init(&s->bc_mutex);
