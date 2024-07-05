@@ -40,6 +40,10 @@
 #define BC_STAT_CFG_SCST_MASK 0x7
 #define BC_STAT_CFG_SCST_OFF 0
 
+#define BC_ACT_ASYNC_STOP (1 << 9)
+#define BC_ACT_ASYNC_START (1 << 8)
+#define BC_ACT_EXT_TRIG_CLEAR (1<< 4)
+#define BC_ACT_EXT_TRIG_SET (1 << 3)
 #define BC_ACT_SCHED_STOP (1 << 2)
 #define BC_ACT_SCHED_SUSPEND (1 << 1)
 #define BC_ACT_SCHED_START (1 << 0)
@@ -79,7 +83,7 @@ typedef union {
         uint32_t rtad2 : 5;
         uint32_t rtto : 4;
         uint32_t bus : 1;
-        uint32_t dum : 1;
+        uint32_t dummy : 1;
     };
     uint32_t val;
 } bc_word1_t;
@@ -111,8 +115,8 @@ typedef union {
 
 typedef union {
     struct {
-        uint32_t is_branch_desc : 1;
         uint32_t : 31;
+        uint32_t is_branch_desc : 1;
     };
     struct {
         bc_word0_t word0;
@@ -287,7 +291,7 @@ static void exec_msg_desc(GR1553BState *s, bc_trans_desc_t *desc)
     assert(desc->word0.stbus == 0);
     assert(desc->word0.gap == 0);
 
-    if (desc->word1.dum) {
+    if (desc->word1.dummy) {
         desc->result.val = 0;
         desc->result.tfrst = BC_TFRST_SUCCESS;
     } else {
@@ -425,6 +429,34 @@ static void *gr1553b_bc_thread(void *opaque)
     return NULL;
 }
 
+static void bc_action_write(GR1553BState *s, uint32_t val)
+{
+    if (val & (BC_ACT_ASYNC_STOP | BC_ACT_ASYNC_START | BC_ACT_EXT_TRIG_CLEAR |
+        BC_ACT_EXT_TRIG_SET)) {
+        g_assert_not_reached();
+    }
+
+    qemu_mutex_lock(&s->internal_mutex);
+    if (val & BC_ACT_SCHED_STOP) {
+        if (s->bc_scst == BC_SCHED_STOPPED || s->bc_scst == BC_SCHED_SUSPENDED) {
+            s->bc_scst = BC_SCHED_STOPPED;
+        } else {
+            s->internal_signal |= INTERNAL_SIGNAL_STOP;
+        }
+    } else if (val & BC_ACT_SCHED_SUSPEND) {
+        if (s->bc_scst == BC_SCHED_STOPPED || s->bc_scst == BC_SCHED_SUSPENDED) {
+            s->bc_scst = BC_SCHED_SUSPENDED;
+        } else {
+            s->internal_signal |= INTERNAL_SIGNAL_SUSPEND;
+        }
+    } else if (val & BC_ACT_SCHED_START) {
+        if (s->bc_scst == BC_SCHED_STOPPED || s->bc_scst == BC_SCHED_SUSPENDED) {
+            qemu_mutex_unlock(&s->bc_mutex);
+        }
+    }
+    qemu_mutex_unlock(&s->internal_mutex);
+}
+
 static uint64_t gr1553b_read(void *opaque, hwaddr offset, unsigned size)
 {
     GR1553BState *s = GR1553B(opaque);
@@ -447,6 +479,34 @@ static uint64_t gr1553b_read(void *opaque, hwaddr offset, unsigned size)
     case REG_BC_TRANS_LIST_PTR:
         val = s->reg_bc_trans;
         break;
+
+    case REG_BC_ASYNC_LIST_PTR:
+        g_assert_not_reached();
+        break;
+
+    case REG_BC_TIMER:
+        g_assert_not_reached();
+        break;
+
+    case REG_BC_TIMER_WAKE_UP:
+        g_assert_not_reached();
+        break;
+
+    case REG_BC_IRQ_RING_POS:
+        g_assert_not_reached();
+        break;
+
+    case REG_BC_BUS_SWAP:
+        g_assert_not_reached();
+        break;
+
+    case REG_BC_TRANS_LIST_CURR_PTR:
+        g_assert_not_reached();
+        break;
+
+    case REG_BC_TRANS_ASYNC_CURR_PTR:
+        g_assert_not_reached();
+        break;
     }
 
     return val;
@@ -465,34 +525,36 @@ static void gr1553b_write(void *opaque, hwaddr offset, uint64_t val, unsigned si
         s->reg_mask = val;
         break;
 
-    case REG_BC_ACTION:
-        if ((val & WRITE_KEY_MASK) != BC_KEY) {
-            break;
+    case REG_BC_STATUS_CONFIG:
+        if (val & BC_STAT_CFG_BCCHK) {
+            g_assert_not_reached();
         }
+        break;
 
-        qemu_mutex_lock(&s->internal_mutex);
-        if (val & BC_ACT_SCHED_STOP) {
-            if (s->bc_scst == BC_SCHED_STOPPED || s->bc_scst == BC_SCHED_SUSPENDED) {
-                s->bc_scst = BC_SCHED_STOPPED;
-            } else {
-                s->internal_signal |= INTERNAL_SIGNAL_STOP;
-            }
-        } else if (val & BC_ACT_SCHED_SUSPEND) {
-            if (s->bc_scst == BC_SCHED_STOPPED || s->bc_scst == BC_SCHED_SUSPENDED) {
-                s->bc_scst = BC_SCHED_SUSPENDED;
-            } else {
-                s->internal_signal |= INTERNAL_SIGNAL_SUSPEND;
-            }
-        } else if (val & BC_ACT_SCHED_START) {
-            if (s->bc_scst == BC_SCHED_STOPPED || s->bc_scst == BC_SCHED_SUSPENDED) {
-                qemu_mutex_unlock(&s->bc_mutex);
-            }
+    case REG_BC_ACTION:
+        if ((val & WRITE_KEY_MASK) == BC_KEY) {
+            bc_action_write(s, val);
         }
-        qemu_mutex_unlock(&s->internal_mutex);
         break;
 
     case REG_BC_TRANS_LIST_PTR:
         s->reg_bc_trans = val;
+        break;
+
+    case REG_BC_ASYNC_LIST_PTR:
+        g_assert_not_reached();
+        break;
+
+    case REG_BC_TIMER_WAKE_UP:
+        g_assert_not_reached();
+        break;
+
+    case REG_BC_IRQ_RING_POS:
+        g_assert_not_reached();
+        break;
+
+    case REG_BC_BUS_SWAP:
+        g_assert_not_reached();
         break;
     }
 
