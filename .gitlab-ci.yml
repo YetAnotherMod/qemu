@@ -1,24 +1,47 @@
-#
-# This is the GitLab CI configuration file for the mainstream QEMU
-# project: https://gitlab.com/qemu-project/qemu/-/pipelines
-#
-# !!! DO NOT ADD ANY NEW CONFIGURATION TO THIS FILE !!!
-#
-# Only documentation or comments is accepted.
-#
-# To use a different set of jobs than the mainstream QEMU project,
-# you need to set the location of your custom yml file at "custom CI/CD
-# configuration path", on your GitLab CI namespace:
-# https://docs.gitlab.com/ee/ci/pipelines/settings.html#custom-cicd-configuration-path
-#
-# ----------------------------------------------------------------------
-#
-# QEMU CI jobs are based on templates. Some templates provide
-# user-configurable options, modifiable via configuration variables.
-#
-# See https://qemu-project.gitlab.io/qemu/devel/ci.html#custom-ci-cd-variables
-# for more information.
-#
+stages:
+  - build
 
-include:
-  - local: '/.gitlab-ci.d/qemu-project.yml'
+qemu_debian11:
+  stage: build
+  image: lrepo.module.ru/debian:11
+  before_script:
+    # INFO: setup clean debian to use local repositories
+    - echo "deb https://lrepo.module.ru/repository/debian bullseye main contrib non-free" > /etc/apt/sources.list
+    - echo "deb https://lrepo.module.ru/repository/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
+    - echo "deb https://lrepo.module.ru/repository/debiansecurity bullseye-security main" >> /etc/apt/sources.list
+    # INFO: ignore certificates issues
+    - echo "Acquire::https::Verify-Peer "false";" >> /etc/apt/apt.conf.d/allowall
+    - echo "Acquire::https::Verify-Host "false";" >> /etc/apt/apt.conf.d/allowall
+    - apt update
+  script:
+    - apt install -y git libglib2.0-dev libfdt-dev
+        libpixman-1-dev zlib1g-dev ninja-build python3-pip
+
+    # during CI we have no access to external gitlab
+    # change urls to local repos in same group and don't forget to clone them
+    - REPOSITORY_GROUP_URL=$(dirname ${CI_REPOSITORY_URL})
+    - sed -i
+        "s|https://gitlab.com/qemu-project|${REPOSITORY_GROUP_URL}|"
+        subprojects/keycodemapdb.wrap
+    - sed -i
+        "s|https://gitlab.com/qemu-project|${REPOSITORY_GROUP_URL}|"
+        subprojects/berkeley-softfloat-3.wrap
+    - sed -i
+        "s|https://gitlab.com/qemu-project|${REPOSITORY_GROUP_URL}|"
+        subprojects/berkeley-testfloat-3.wrap
+
+    - mkdir build
+    - cd build
+    - ../configure --target-list=ppc-softmmu
+        --disable-vnc --disable-sdl --disable-gnutls --disable-nettle --disable-gtk
+    - make -j
+    - cd -
+  after_script:
+    - mkdir artifacts
+    - cp build/qemu-system-ppc artifacts
+    - cp pc-bios/module_* artifacts
+    - cp scripts/qemu-ifup artifacts
+  artifacts:
+    paths:
+      - artifacts/*
+    expire_in: 1 day
