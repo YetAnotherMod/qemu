@@ -4,6 +4,8 @@
 #include "hw/sysbus.h"
 #include "qemu/thread.h"
 
+#include <virtmko.h>
+
 struct GR1553BState {
     /*< private >*/
     SysBusDevice parent;
@@ -27,7 +29,10 @@ struct GR1553BState {
     QemuThread bc_thread;
 
     /* virtmko */
-    void *vmko_controller;
+    vmko_controller *vmko_ctrl;
+    QemuMutex bc_recv_wait;
+    vmko_msg resp;
+    bool resp_valid;
 };
 
 typedef struct GR1553BState GR1553BState;

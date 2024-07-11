@@ -12,8 +12,6 @@
 
 #include "hw/misc/gr1553b.h"
 
-#include <virtmko.h>
-
 #define REG_IRQ 0x0
 #define REG_IRQ_ENABLE 0x4
 #define REG_HW_CONFIG 0x10
@@ -239,6 +237,12 @@ static int get_format(bc_word1_t word1)
     return word1.tr ? 2 : 1;
 }
 
+static bool bc_virtmko_recv_wait(GR1553BState *s)
+{
+    qemu_mutex_lock(&s->bc_recv_wait);
+    return s->resp_valid;
+}
+
 static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
 {
     desc->result.val = 0;
@@ -258,22 +262,26 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
-        vmko_send(s->vmko_controller, &msg);
-        if (vmko_receive(s->vmko_controller, &msg) < 0) {
+
+        vmko_send(s->vmko_ctrl, &msg);
+
+        if (bc_virtmko_recv_wait(s) == false) {
             desc->result.tfrst = BC_TFRST_RT_NO_REPSONSE;
         }
         break;
 
     case 2:
-        vmko_send(s->vmko_controller, &msg);
-        if (vmko_receive(s->vmko_controller, &msg) < 0) {
+        vmko_send(s->vmko_ctrl, &msg);
+
+        if (bc_virtmko_recv_wait(s) == false) {
             desc->result.tfrst = BC_TFRST_RT_NO_REPSONSE;
-        } else {
-            if (dma_memory_write(&address_space_memory, desc->addr, msg.data, size,
+            break;
+        }
+
+        if (dma_memory_write(&address_space_memory, desc->addr, s->resp.data, size,
                                  MEMTXATTRS_UNSPECIFIED)) {
-                /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
-                g_assert_not_reached();
-            }
+            /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
+            g_assert_not_reached();
         }
         break;
 
@@ -583,6 +591,43 @@ static const MemoryRegionOps gr1553b_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
+/*
+ * virtmko handlers
+ */
+static void vmko_recv_hndl(vmko_controller *ctr, vmko_msg *msg)
+{
+    GR1553BState *s = vmko_get_private_data(ctr);
+
+    /* when locked means BC waits for response */
+    if (qemu_mutex_trylock(&s->bc_recv_wait)) {
+        s->resp_valid = (msg != NULL);
+
+        if (msg) {
+            memcpy(&s->resp, msg, sizeof(vmko_msg));
+        }
+
+        qemu_mutex_unlock(&s->bc_recv_wait);
+        return;
+    }
+
+    qemu_mutex_unlock(&s->bc_recv_wait);
+
+    /* TODO: если работает ОУ, то передать сообщение ему */
+}
+
+static void vmko_timeout_hndl(vmko_controller *ctr)
+{
+    /* FIXME: timeout can be triggered too early
+     * this can happen coz timeouts are not related with vmko_send function
+     * and it can trigger right after BC sended and waits for response
+     * so it receives NULL instead of normal response
+     */
+    vmko_recv_hndl(ctr, NULL);
+}
+
+/*
+ * device code
+ */
 static void gr1553b_realize(DeviceState *dev, Error **errp)
 {
     GR1553BState *s = GR1553B(dev);
@@ -594,12 +639,17 @@ static void gr1553b_realize(DeviceState *dev, Error **errp)
 
     /* internal */
     qemu_mutex_init(&s->internal_mutex);
+    qemu_mutex_init(&s->bc_recv_wait);
 
     /* virtmko */
-    s->vmko_controller = vmko_new();
-    vmko_set_ip_port(s->vmko_controller, "224.5.0.141:3800");
-    vmko_set_timeout(s->vmko_controller, 1);
-    vmko_start(s->vmko_controller);
+    s->vmko_ctrl = vmko_new();
+    /* TODO: придумать как передавать аргументы для подключения */
+    vmko_set_ip_port(s->vmko_ctrl, "224.5.0.141:3800");
+    vmko_set_timeout(s->vmko_ctrl, 1);
+    vmko_set_handler(s->vmko_ctrl, vmko_recv_hndl);
+    vmko_set_timeout_handler(s->vmko_ctrl, vmko_timeout_hndl);
+    vmko_set_private_data(s->vmko_ctrl, s);
+    vmko_start_threaded(s->vmko_ctrl);
 
     /* create locked mutex and recv/send thread for bc mode */
     qemu_mutex_init(&s->bc_mutex);
