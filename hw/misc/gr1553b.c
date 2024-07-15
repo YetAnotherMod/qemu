@@ -27,6 +27,18 @@
 #define REG_BC_TRANS_LIST_CURR_PTR 0x68
 #define REG_BC_TRANS_ASYNC_CURR_PTR 0x6c
 
+#define REG_RT_STATUS 0x80
+#define REG_RT_CONFIG 0x84
+#define REG_RT_BUS_STATUS 0x88
+#define REG_RT_STATUS_WORDS 0x8c
+#define REG_RT_SYNC 0x90
+#define REG_RT_SUBADDR_BASE_ADDR 0x94
+#define REG_RT_MODE_CODE_CTRL 0x98
+#define REG_RT_TIME_TAG_CTRL 0xa4
+#define REG_RT_EVENT_LOG_SIZE 0xac
+#define REG_RT_EVENT_LOG_POS 0xb0
+#define REG_RT_EVENT_LOG_IRQ_POS 0xb4
+
 #define IRQ_BCEV (1 << 0)
 
 #define BC_STAT_CFG_BCSUP (1 << 31)
@@ -46,11 +58,33 @@
 #define BC_ACT_SCHED_SUSPEND (1 << 1)
 #define BC_ACT_SCHED_START (1 << 0)
 
+#define RT_STATUS_RTSUP (1 << 31)
+#define RT_STATUS_ACT (1 << 3)
+#define RT_STATUS_SHDA (1 << 2)
+#define RT_STATUS_SHDB (1 << 1)
+#define RT_STATUS_RUN (1 << 0)
+
+#define RT_CONFIG_SYS (1 << 15)
+#define RT_CONFIG_SYDS (1 << 14)
+#define RT_CONFIG_BRS (1 << 13)
+#define RT_CONFIG_RTEIS (1 << 6)
+#define RT_CONFIG_RTADDR_MASK 0x1f
+#define RT_CONFIG_RTADDR_OFF 1
+#define RT_CONFIG_RTEN (1 << 0)
+
+#define RT_SUBADDR_BASE_ADDR_MASK 0xfffffe00
+
+#define RT_INVALID_POINTER 0x3
+#define RT_RESET_ADDR 0x1f
+
 #define WRITE_KEY_MASK 0xffff0000
 #define BC_KEY 0x15520000
+#define RT_KEY 0x15530000
+
+#define MKO_MAX_WORDS 32
 
 /*
- * DMA logic
+ * DMA logic for BC
  */
 typedef union {
     struct {
@@ -147,6 +181,89 @@ static int write_bc_trans_desc(AddressSpace *as, dma_addr_t addr, bc_trans_desc_
 
     if (dma_memory_write(as, addr + offsetof(bc_trans_desc_t, result), &desc->result,
                          sizeof(uint32_t), MEMTXATTRS_UNSPECIFIED)) {
+        return -1;
+    }
+    return 0;
+}
+
+/*
+ * DMA logic for RT
+ */
+typedef union {
+    struct {
+        uint32_t tres : 3;
+        uint32_t sz : 6;
+        uint32_t bc : 1;
+        uint32_t time : 16;
+        uint32_t : 4;
+        uint32_t irqen : 1;
+        uint32_t dv : 1;
+    };
+    uint32_t val;
+} rt_desc_word_t;
+
+typedef struct {
+    rt_desc_word_t word;
+    uint32_t data_addr;
+    uint32_t next_desc;
+} rt_desc_t;
+
+typedef union {
+    struct {
+        uint32_t txsz : 5;
+        uint32_t txirq : 1;
+        uint32_t txlog : 1;
+        uint32_t txen : 1;
+        uint32_t rxsz : 5;
+        uint32_t rxirq : 1;
+        uint32_t rxlog : 1;
+        uint32_t rxen : 1;
+        uint32_t bcrxe : 1;
+        uint32_t igndv : 1;
+        uint32_t wrap : 1;
+        uint32_t : 13;
+    };
+    uint32_t val;
+} rt_subaddr_ctrl_t;
+
+typedef struct {
+    rt_subaddr_ctrl_t word;
+    uint32_t tx_addr;
+    uint32_t rx_addr;
+    uint32_t _;
+} rt_subaddr_entry_t;
+
+static int read_rt_subaddr_entry(AddressSpace *as, dma_addr_t addr,
+                                 rt_subaddr_entry_t *ent)
+{
+    if (dma_memory_read(as, addr, ent, sizeof(rt_subaddr_entry_t),
+                        MEMTXATTRS_UNSPECIFIED)) {
+        return -1;
+    }
+
+    ent->word.val = cpu_to_be32(ent->word.val);
+    ent->tx_addr = cpu_to_be32(ent->tx_addr);
+    ent->rx_addr = cpu_to_be32(ent->rx_addr);
+    return 0;
+}
+
+static int read_rt_desc(AddressSpace *as, dma_addr_t addr, rt_desc_t *desc)
+{
+    if (dma_memory_read(as, addr, desc, sizeof(rt_desc_t), MEMTXATTRS_UNSPECIFIED)) {
+        return -1;
+    }
+
+    desc->word.val = cpu_to_be32(desc->word.val);
+    desc->data_addr = cpu_to_be32(desc->data_addr);
+    desc->next_desc = cpu_to_be32(desc->next_desc);
+    return 0;
+}
+
+static int write_rt_u32(AddressSpace *as, dma_addr_t addr, uint32_t data)
+{
+    data = be32_to_cpu(data);
+
+    if (dma_memory_write(as, addr, &data, sizeof(uint32_t), MEMTXATTRS_UNSPECIFIED)) {
         return -1;
     }
     return 0;
@@ -254,7 +371,7 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
     msg.addr = desc->word1.rtad1;
     msg.format = get_format(desc->word1);
 
-    uint32_t size = (msg.nwords ? msg.nwords : 32) * sizeof(uint16_t);
+    uint32_t size = (msg.nwords ? msg.nwords : MKO_MAX_WORDS) * sizeof(uint16_t);
     switch (msg.format) {
     case 1:
         if (dma_memory_read(&address_space_memory, desc->addr, msg.data, size,
@@ -437,6 +554,136 @@ static void *gr1553b_bc_thread(void *opaque)
     return NULL;
 }
 
+enum {
+    RT_TRES_SUCCESS,
+    RT_TRES_SUPRESEDED,
+    RT_TRES_DMA_ERROR,
+    RT_TRES_PROTOCOL_ERROR,
+    RT_TRES_NO_DATA_RESP,
+    RT_TRES_LOOPBACK_FAIL,
+};
+
+static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
+{
+    if (msg->format > 2) {
+        g_assert_not_reached();
+    }
+
+    if (msg->addr != s->rt_addr) {
+        return;
+    }
+
+    rt_subaddr_entry_t entry;
+    uint32_t entry_addr =
+        s->reg_rt_subaddr_base_addr + msg->subaddr * sizeof(rt_subaddr_entry_t);
+
+    if (read_rt_subaddr_entry(&address_space_memory, entry_addr, &entry)) {
+        /* FIXME: generate irq and then what?*/
+        g_assert_not_reached();
+    }
+
+    /* this bits are not supported yet */
+    assert(entry.word.txsz == 0);
+    assert(entry.word.rxsz == 0);
+    assert(entry.word.txirq == 0);
+    assert(entry.word.rxirq == 0);
+    assert(entry.word.txlog == 0);
+    assert(entry.word.rxlog == 0);
+    assert(entry.word.bcrxe == 0);
+    assert(entry.word.wrap == 0);
+
+    uint32_t desc_addr;
+    switch (msg->format) {
+    case 1:
+        if (!entry.word.rxen || entry.rx_addr == RT_INVALID_POINTER) {
+            /* TODO: add response that means "no response" */
+            return;
+        }
+        desc_addr = entry.rx_addr;
+        break;
+
+    case 2:
+        if (!entry.word.txen || entry.tx_addr == RT_INVALID_POINTER) {
+            /* TODO: add response that means "no response" */
+            return;
+        }
+        desc_addr = entry.tx_addr;
+        break;
+
+    default:
+        g_assert_not_reached();
+    }
+
+    rt_desc_t desc;
+    if (read_rt_desc(&address_space_memory, desc_addr, &desc)) {
+        /* FIXME: generate irq and then what?*/
+        g_assert_not_reached();
+    }
+
+    uint32_t size = (msg->nwords ? msg->nwords : MKO_MAX_WORDS) * sizeof(uint16_t);
+
+    switch (msg->format) {
+    case 1:
+        if (desc.word.dv && !entry.word.igndv) {
+            /* TODO: add response that means "no response" */
+            return;
+        }
+
+        /* write data */
+        if (dma_memory_write(&address_space_memory, desc.data_addr, msg->data, size,
+                             MEMTXATTRS_UNSPECIFIED)) {
+            /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
+            g_assert_not_reached();
+        }
+
+        /* update subaddress entry pointer */
+        if (write_rt_u32(&address_space_memory,
+                         entry_addr + offsetof(rt_subaddr_entry_t, rx_addr),
+                         desc.next_desc)) {
+            /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
+            g_assert_not_reached();
+        }
+
+        desc.word.tres = RT_TRES_SUCCESS;
+        desc.word.sz = msg->nwords;
+        desc.word.dv = 1;
+
+        if (write_rt_u32(&address_space_memory, desc_addr, desc.word.val)) {
+            /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
+            g_assert_not_reached();
+        }
+        break;
+
+    case 2:
+        /* read data */
+        if (dma_memory_read(&address_space_memory, desc.data_addr, msg->data, size,
+                            MEMTXATTRS_UNSPECIFIED)) {
+            /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
+            g_assert_not_reached();
+        }
+
+        /* update subaddress entry pointer */
+        if (write_rt_u32(&address_space_memory,
+                         entry_addr + offsetof(rt_subaddr_entry_t, tx_addr),
+                         desc.next_desc)) {
+            /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
+            g_assert_not_reached();
+        }
+
+        desc.word.tres = RT_TRES_SUCCESS;
+        desc.word.sz = msg->nwords;
+        desc.word.dv = 1;
+
+        if (write_rt_u32(&address_space_memory, desc_addr, desc.word.val)) {
+            /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
+            g_assert_not_reached();
+        }
+        break;
+    }
+
+    vmko_send(s->vmko_ctrl, msg);
+}
+
 static void bc_action_write(GR1553BState *s, uint32_t val)
 {
     if (val & (BC_ACT_ASYNC_STOP | BC_ACT_ASYNC_START | BC_ACT_EXT_TRIG_CLEAR |
@@ -463,6 +710,16 @@ static void bc_action_write(GR1553BState *s, uint32_t val)
         }
     }
     qemu_mutex_unlock(&s->internal_mutex);
+}
+
+static void rt_config_write(GR1553BState *s, uint32_t val)
+{
+    if (val & (RT_CONFIG_SYS | RT_CONFIG_SYDS | RT_CONFIG_BRS)) {
+        g_assert_not_reached();
+    }
+
+    s->rt_addr = (val >> RT_CONFIG_RTADDR_OFF) & RT_CONFIG_RTADDR_MASK;
+    s->rt_enabled = val & RT_CONFIG_RTEN;
 }
 
 static uint64_t gr1553b_read(void *opaque, hwaddr offset, unsigned size)
@@ -515,6 +772,38 @@ static uint64_t gr1553b_read(void *opaque, hwaddr offset, unsigned size)
     case REG_BC_TRANS_ASYNC_CURR_PTR:
         g_assert_not_reached();
         break;
+
+    case REG_RT_STATUS:
+        val = RT_STATUS_RTSUP | s->rt_enabled ? RT_STATUS_RUN : 0;
+        break;
+
+    case REG_RT_CONFIG:
+        val = s->rt_addr << RT_CONFIG_RTADDR_OFF | s->rt_enabled ? RT_CONFIG_RTEN : 0;
+        break;
+
+    case REG_RT_BUS_STATUS:
+        val = s->reg_rt_bus_status;
+        break;
+
+    case REG_RT_STATUS_WORDS:
+    case REG_RT_SYNC:
+        g_assert_not_reached();
+        break;
+
+    case REG_RT_SUBADDR_BASE_ADDR:
+        val = s->reg_rt_subaddr_base_addr;
+        break;
+
+    case REG_RT_MODE_CODE_CTRL:
+    case REG_RT_TIME_TAG_CTRL:
+    case REG_RT_EVENT_LOG_SIZE:
+    case REG_RT_EVENT_LOG_POS:
+    case REG_RT_EVENT_LOG_IRQ_POS:
+        g_assert_not_reached();
+        break;
+
+    default:
+        break;
     }
 
     return val;
@@ -564,6 +853,36 @@ static void gr1553b_write(void *opaque, hwaddr offset, uint64_t val, unsigned si
     case REG_BC_BUS_SWAP:
         g_assert_not_reached();
         break;
+
+    case REG_RT_CONFIG:
+        if ((val & WRITE_KEY_MASK) == RT_KEY) {
+            rt_config_write(s, val);
+        }
+        break;
+
+    case REG_RT_BUS_STATUS:
+        s->reg_rt_bus_status = val;
+        break;
+
+    case REG_RT_STATUS_WORDS:
+    case REG_RT_SYNC:
+        g_assert_not_reached();
+        break;
+
+    case REG_RT_SUBADDR_BASE_ADDR:
+        s->reg_rt_subaddr_base_addr = val & RT_SUBADDR_BASE_ADDR_MASK;
+        break;
+
+    case REG_RT_MODE_CODE_CTRL:
+    case REG_RT_TIME_TAG_CTRL:
+    case REG_RT_EVENT_LOG_SIZE:
+    case REG_RT_EVENT_LOG_POS:
+    case REG_RT_EVENT_LOG_IRQ_POS:
+        g_assert_not_reached();
+        break;
+
+    default:
+        break;
     }
 
     gr1553b_update_irq(s);
@@ -581,6 +900,11 @@ static void gr1553b_reset(DeviceState *dev)
     s->reg_bc_trans = 0;
     s->bc_scst = BC_SCHED_STOPPED;
     s->internal_signal = INTERNAL_SIGNAL_NONE;
+
+    s->rt_addr = RT_RESET_ADDR;
+    s->rt_enabled = 0;
+    s->reg_rt_bus_status = 0;
+    s->reg_rt_subaddr_base_addr = 0;
 
     gr1553b_update_irq(s);
 }
@@ -612,7 +936,10 @@ static void vmko_recv_hndl(vmko_controller *ctr, vmko_msg *msg)
 
     qemu_mutex_unlock(&s->bc_recv_wait);
 
-    /* TODO: если работает ОУ, то передать сообщение ему */
+    /* if RT is enabled and BC is not */
+    if (msg && s->rt_enabled) {
+        rt_handle_msg(s, msg);
+    }
 }
 
 static void vmko_timeout_hndl(vmko_controller *ctr)
