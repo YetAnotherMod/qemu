@@ -17,6 +17,12 @@
 #include "exec/memory.h"
 #include "exec/address-spaces.h"
 
+#ifdef CONFIG_VIRTSW
+    #include "hw/misc/rcm_spacewire.h"
+#endif
+
+#define SW_COUNT 4
+
 typedef struct {
     MachineState parent;
 
@@ -31,6 +37,10 @@ typedef struct {
     GRETHState greth[2];
 
     KeyasicSdState sdio;
+
+#ifdef CONFIG_VIRTSW
+    RCMSpaceWireState sw[SW_COUNT];
+#endif
 
     /* board properties */
     uint8_t boot_cfg;
@@ -267,6 +277,45 @@ static void cpu_reset_temp(void *opaque)
     /* Create mapping */
     create_initial_mapping(&cpu->env);
 }
+
+#ifdef CONFIG_VIRTSW
+static void add_spacewire_controllers(MT174MachineState *s,
+                                      AddressSpace *addr_space)
+{
+    hwaddr addr[SW_COUNT] = {
+        0x20c0300000u, 0x20c0301000u, 0x20c0302000u, 0x20c0303000u
+    };
+    char name[8];
+
+    for (uint32_t i = 0; i < SW_COUNT; i++) {
+        snprintf(name, sizeof(name), "sw[%u]", i);
+        object_initialize_child(OBJECT(s), name, &s->sw[i], TYPE_RCM_SPACEWIRE);
+        rcm_sw_change_address_space(&s->sw[i], addr_space, &error_fatal);
+        sysbus_realize(SYS_BUS_DEVICE(&s->sw[i]), &error_fatal);
+        SysBusDevice *busdev = SYS_BUS_DEVICE(&s->sw[i]);
+        memory_region_add_subregion(get_system_memory(), addr[i],
+                                    sysbus_mmio_get_region(busdev, 0));
+    }
+}
+#else
+static void add_spacewire_controllers(MT174MachineState *s,
+                                      AddressSpace *addr_space)
+{
+    hwaddr addr[SW_COUNT] = {
+        0x20c0300000u, 0x20c0301000u, 0x20c0302000u, 0x20c0303000u
+    };
+    char name[8];
+
+    (void)addr_space; /* unused */
+
+    for (uint32_t i = 0; i < SW_COUNT; i++) {
+        snprintf(name, sizeof(name), "sw[%u]", i);
+        MemoryRegion *mko = g_new(MemoryRegion, 1);
+        memory_region_init_ram(mko, NULL, name, 4 * KiB, &error_fatal);
+        memory_region_add_subregion(get_system_memory(), addr[i], mko);
+    }
+}
+#endif
 
 static void mt174_init(MachineState *machine)
 {
@@ -511,21 +560,7 @@ static void mt174_init(MachineState *machine)
     memory_region_init_ram(switch_axi32r, NULL, "switch_axi32r", 1 * MiB, &error_fatal);
     memory_region_add_subregion(get_system_memory(), 0x20c0200000, switch_axi32r);
 
-    MemoryRegion *spacewire0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(spacewire0, NULL, "spacewire0", 4 * KiB, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c0300000, spacewire0);
-
-    MemoryRegion *spacewire1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(spacewire1, NULL, "spacewire1", 4 * KiB, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c0301000, spacewire1);
-
-    MemoryRegion *spacewire2 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(spacewire2, NULL, "spacewire2", 4 * KiB, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c0302000, spacewire2);
-
-    MemoryRegion *spacewire3 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(spacewire3, NULL, "spacewire3", 4 * KiB, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c0303000, spacewire3);
+    add_spacewire_controllers(s, axi_addr_space);
 
     MemoryRegion *COM0 = g_new(MemoryRegion, 1);
     memory_region_init_ram(COM0, NULL, "COM0", 4 * KiB, &error_fatal);
