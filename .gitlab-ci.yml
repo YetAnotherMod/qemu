@@ -16,6 +16,13 @@ qemu_debian11:
   script:
     - apt install -y git libglib2.0-dev libfdt-dev
         libpixman-1-dev zlib1g-dev ninja-build python3-pip
+        curl unzip
+
+    # download virtsw library and install it
+    - 'curl --output /artifacts.zip --header "JOB-TOKEN: $CI_JOB_TOKEN"
+        "$CI_API_V4_URL/projects/276/jobs/artifacts/develop/download?job=debian11_64"'
+    - unzip /artifacts.zip -d /
+    - dpkg -i /_packages/emuio-virtsw*.deb
 
     # during CI we have no access to external gitlab
     # change urls to local repos in same group and don't forget to clone them
@@ -34,6 +41,7 @@ qemu_debian11:
     - cd build
     - ../configure --target-list=ppc-softmmu
         --disable-vnc --disable-sdl --disable-gnutls --disable-nettle --disable-gtk
+        --enable-virtsw
     - make -j
     - cd -
   after_script:
