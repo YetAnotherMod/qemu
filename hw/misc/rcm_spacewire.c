@@ -1,0 +1,522 @@
+/*
+ * RC Module spacewire controller
+ *
+ */
+#include "qemu/osdep.h"
+#include "qapi/error.h"
+
+#include "hw/misc/rcm_spacewire.h"
+
+#define SW_REG_ID 0x0
+#define SW_REG_VERSION 0x4
+#define SW_REG_RESET 0x8
+#define SW_REG_SETTINGS 0xc
+#define SW_REG_STATUS 0x10
+#define SW_REG_ADMA_RESET 0x808
+
+#define SW_REG_RDMA_SETTINGS 0x900
+#define SW_REG_RDMA_STATUS 0x904
+#define SW_REG_RDMA_SYS_ADDR 0x908
+#define SW_REG_RDMA_TBL_SIZE 0x90c
+
+#define SW_REG_WDMA_SETTINGS 0xa00
+#define SW_REG_WDMA_STATUS 0xa04
+#define SW_REG_WDMA_SYS_ADDR 0xa08
+#define SW_REG_WDMA_TBL_SIZE 0xa0c
+
+#define SW_ID 0x42435348u
+#define SW_VERSION 0x102u
+
+#define SW_SETTINGS_ENABLE (1u << 0)
+#define SW_SETTINGS_TX_ENDIAN (1u << 1)
+#define SW_SETTINGS_RX_ENDIAN (1u << 2)
+#define SW_SETTINGS_LOOPBACK (1u << 5)
+#define SW_SETTINGS_MASK \
+    (SW_SETTINGS_ENABLE | SW_SETTINGS_TX_ENDIAN | SW_SETTINGS_RX_ENDIAN | \
+     SW_SETTINGS_LOOPBACK)
+
+#define SW_RWDMA_SETTINGS_ENABLE (1u << 28)
+#define SW_RWDMA_SETTINGS_DESC_TBL (1u << 29)
+#define SW_RWDMA_SETTINGS_LONG_LEN (1u << 30)
+#define SW_RWDMA_SETTINGS_MASK \
+    (SW_RWDMA_SETTINGS_ENABLE | SW_RWDMA_SETTINGS_DESC_TBL | SW_RWDMA_SETTINGS_LONG_LEN)
+
+#define SW_DESC_ACTIVITY_TRAN 0x2
+#define SW_DESC_ACTIVITY_COMPL 0x1
+
+/*
+ * DMA logic
+ */
+typedef struct {
+    union {
+        struct {
+            uint32_t valid:1;
+            uint32_t :1;
+            uint32_t interrupt:1;
+            uint32_t with_end:1;
+            uint32_t activity:2;
+            uint32_t length:26;
+        };
+        struct {
+            uint32_t :1;
+            uint32_t connection_error:1;
+            uint32_t parity_error:1;
+            uint32_t :29;
+        };
+        uint32_t cmd;
+    };
+    uint32_t addr;
+} sw_dma_desc_t;
+
+static int read_dma_desc(RCMSpaceWireState *s, dma_addr_t addr, sw_dma_desc_t *desc)
+{
+    if (dma_memory_read(s->addr_space, addr, desc, sizeof(sw_dma_desc_t),
+                        MEMTXATTRS_UNSPECIFIED)) {
+        return -1;
+    }
+    return 0;
+}
+
+static int write_dma_desc(RCMSpaceWireState *s, dma_addr_t addr, sw_dma_desc_t *desc)
+{
+    if (dma_memory_write(s->addr_space, addr, desc, sizeof(sw_dma_desc_t),
+                         MEMTXATTRS_UNSPECIFIED)) {
+        return -1;
+    }
+    return 0;
+}
+
+/*
+ * controller logic
+ */
+static void rcm_sw_soft_reset(RCMSpaceWireState *s)
+{
+    s->settings = 0;
+}
+
+static void rcm_sw_wdma_recv(RCMSpaceWireState *s)
+{
+    // проверить, что прием не выключен
+    if (!(s->settings & SW_SETTINGS_ENABLE)) {
+        goto _stop_wdma;
+    }
+
+    if (!(qatomic_read(&s->wdma_settings) & SW_RWDMA_SETTINGS_ENABLE)) {
+        goto _stop_wdma;
+    }
+
+    // взять очередной дескриптор
+    sw_dma_desc_t desc = {0};
+    uint32_t offset =
+        (s->wdma_tbl_size_internal - s->wdma_tbl_size) * sizeof(sw_dma_desc_t);
+
+    if (read_dma_desc(s, s->wdma_sys_addr + offset, &desc)) {
+        // FIXME: set error???
+        g_assert_not_reached();
+    }
+
+    // завершить, если он не активный
+    if (desc.activity != SW_DESC_ACTIVITY_TRAN) {
+        goto _stop_wdma;
+    }
+
+    if (!desc.length) {
+        // FIXME: ZERO-length packets are not supported yet
+        g_assert_not_reached();
+    }
+
+    // отправить запрос, если он активный
+    if (s->settings & SW_SETTINGS_LOOPBACK) {
+        g_assert_not_reached();
+    } else {
+        if (sw_read_start(s->sw_ctrl, desc.length)) {
+            /* FIXME: ?? */
+            g_assert_not_reached();
+        }
+    }
+
+    return;
+
+_stop_wdma:
+    qatomic_and(&s->wdma_settings, ~SW_RWDMA_SETTINGS_ENABLE);
+    qatomic_set(&s->wdma_active, false);
+}
+
+static void rcm_sw_rdma_send(RCMSpaceWireState *s)
+{
+    // проверить, что передача не выключена
+    if (!(s->settings & SW_SETTINGS_ENABLE)) {
+        goto _stop_rdma;
+    }
+
+    if (!(qatomic_read(&s->rdma_settings) & SW_RWDMA_SETTINGS_ENABLE)) {
+        goto _stop_rdma;
+    }
+
+    // взять очередной дескриптор
+    sw_dma_desc_t desc = {0};
+    uint32_t offset =
+        (s->rdma_tbl_size_internal - s->rdma_tbl_size) * sizeof(sw_dma_desc_t);
+
+    if (read_dma_desc(s, s->rdma_sys_addr + offset, &desc)) {
+        // FIXME: set error???
+        g_assert_not_reached();
+    }
+
+    // завершить, если он не активный
+    if (desc.activity != SW_DESC_ACTIVITY_TRAN) {
+        goto _stop_rdma;
+    }
+
+    if (!desc.length) {
+        // FIXME: ZERO-length packets are not supported yet
+        g_assert_not_reached();
+    }
+
+    // отправить запрос, если он активный
+    if (s->settings & SW_SETTINGS_LOOPBACK) {
+        g_assert_not_reached();
+    } else {
+        /* TODO: this bits are not supported yet */
+        g_assert(desc.with_end);
+        g_assert(desc.valid);
+
+        s->rdma_len = desc.length;
+        char *ptr = dma_memory_map(s->addr_space, desc.addr, &s->rdma_len,
+                                   DMA_DIRECTION_FROM_DEVICE, MEMTXATTRS_UNSPECIFIED);
+        if (!ptr) {
+            /* FIXME: ?? */
+            g_assert_not_reached();
+        }
+
+        sw_data data = {
+            .packet_end = SW_PACKET_EOP,
+            .size = desc.length,
+            .data = ptr,
+        };
+
+        if (sw_write_start(s->sw_ctrl, &data)) {
+            /* FIXME: ?? */
+            g_assert_not_reached();
+        }
+    }
+
+    return;
+
+_stop_rdma:
+    qatomic_and(&s->rdma_settings, ~SW_RWDMA_SETTINGS_ENABLE);
+    qatomic_set(&s->rdma_active, false);
+}
+
+static uint64_t rcm_sw_read(void *opaque, hwaddr offset, unsigned size)
+{
+    RCMSpaceWireState *s = RCM_SPACEWIRE(opaque);
+    uint64_t val = 0;
+
+    switch (offset) {
+    case SW_REG_ID:
+        val = SW_ID;
+        break;
+
+    case SW_REG_VERSION:
+        val = SW_VERSION;
+        break;
+
+    /* return 0 as 'reset is done' */
+    case SW_REG_RESET:
+    case SW_REG_ADMA_RESET:
+        break;
+
+    case SW_REG_SETTINGS:
+        val = s->settings;
+        break;
+
+    case SW_REG_RDMA_SETTINGS:
+        val = qatomic_read(&s->rdma_settings);
+        break;
+
+    case SW_REG_RDMA_STATUS:
+        val = s->rdma_status;
+        break;
+
+    case SW_REG_WDMA_SETTINGS:
+        val = qatomic_read(&s->wdma_settings);
+        break;
+
+    case SW_REG_WDMA_STATUS:
+        val = s->wdma_status;
+        break;
+
+    case SW_REG_RDMA_SYS_ADDR:
+        val = s->rdma_sys_addr;
+        break;
+
+    case SW_REG_RDMA_TBL_SIZE:
+        val = s->rdma_tbl_size;
+        break;
+
+    case SW_REG_WDMA_SYS_ADDR:
+        val = s->wdma_sys_addr;
+        break;
+
+    case SW_REG_WDMA_TBL_SIZE:
+        val = s->wdma_tbl_size;
+        break;
+    }
+
+    return val;
+}
+
+static void rcm_sw_write(void *opaque, hwaddr offset, uint64_t val, unsigned size)
+{
+    RCMSpaceWireState *s = RCM_SPACEWIRE(opaque);
+
+    switch (offset) {
+    case SW_REG_RESET:
+        if (val == 1u) {
+            rcm_sw_soft_reset(s);
+        }
+        break;
+
+    case SW_REG_SETTINGS:
+        s->settings = val & SW_SETTINGS_MASK;
+
+        if (val & SW_SETTINGS_ENABLE) {
+            /* start dma only when it was stopped */
+            if (qatomic_xchg(&s->wdma_active, true) == false) {
+                rcm_sw_wdma_recv(s);
+            }
+
+            /* start dma only when it was stopped */
+            if (qatomic_xchg(&s->rdma_active, true) == false) {
+                rcm_sw_rdma_send(s);
+            }
+        }
+        break;
+
+    case SW_REG_RDMA_SETTINGS:
+        qatomic_or(&s->rdma_settings, SW_RWDMA_SETTINGS_MASK);
+
+        if (val & SW_RWDMA_SETTINGS_ENABLE) {
+            /* start dma only when it was stopped */
+            if (qatomic_xchg(&s->rdma_active, true) == false) {
+                rcm_sw_rdma_send(s);
+            }
+        }
+        break;
+
+    case SW_REG_RDMA_STATUS:
+        s->rdma_status = val;
+        break;
+
+    case SW_REG_WDMA_SETTINGS:
+        qatomic_or(&s->wdma_settings, SW_RWDMA_SETTINGS_MASK);
+
+        if (val & SW_RWDMA_SETTINGS_ENABLE) {
+            /* start dma only when it was stopped */
+            if (qatomic_xchg(&s->wdma_active, true) == false) {
+                rcm_sw_wdma_recv(s);
+            }
+        }
+        break;
+
+    case SW_REG_WDMA_STATUS:
+        s->wdma_status = val;
+        break;
+
+    case SW_REG_RDMA_SYS_ADDR:
+        if (qatomic_read(&s->rdma_settings) & SW_RWDMA_SETTINGS_ENABLE) {
+            break;
+        }
+
+        s->rdma_sys_addr = val;
+        break;
+
+    case SW_REG_RDMA_TBL_SIZE:
+        if (qatomic_read(&s->rdma_settings) & SW_RWDMA_SETTINGS_ENABLE) {
+            break;
+        }
+
+        s->rdma_tbl_size = val;
+        s->rdma_tbl_size_internal = val;
+        break;
+
+    case SW_REG_WDMA_SYS_ADDR:
+        if (qatomic_read(&s->wdma_settings) & SW_RWDMA_SETTINGS_ENABLE) {
+            break;
+        }
+
+        s->wdma_sys_addr = val;
+        break;
+
+    case SW_REG_WDMA_TBL_SIZE:
+        if (qatomic_read(&s->wdma_settings) & SW_RWDMA_SETTINGS_ENABLE) {
+            break;
+        }
+
+        s->wdma_tbl_size = val;
+        s->wdma_tbl_size_internal = val;
+        break;
+    }
+}
+
+static void rcm_sw_reset(DeviceState *dev)
+{
+    RCMSpaceWireState *s = RCM_SPACEWIRE(dev);
+
+    rcm_sw_soft_reset(s);
+}
+
+static const MemoryRegionOps rcm_sw_ops = {
+    .read = rcm_sw_read,
+    .write = rcm_sw_write,
+    .endianness = DEVICE_LITTLE_ENDIAN,
+};
+
+/*
+ * virtsw logic
+ */
+static void rcm_sw_read_done(sw_controller *ctr, void *private_data,
+                             sw_data *data, sw_status status)
+{
+    RCMSpaceWireState *s = private_data;
+
+    /* for now support only full and good packets */
+    g_assert(data->packet_end == SW_PACKET_EOP);
+
+    // взять текущий дескриптор
+    sw_dma_desc_t desc = {0};
+    uint32_t offset =
+        (s->wdma_tbl_size_internal - s->wdma_tbl_size) * sizeof(sw_dma_desc_t);
+
+    if (read_dma_desc(s, s->wdma_sys_addr + offset, &desc)) {
+        // FIXME: set error???
+        g_assert_not_reached();
+    }
+
+    // обработать текущий дескриптор
+    if (dma_memory_write(s->addr_space, desc.addr, data->data, data->size,
+                         MEMTXATTRS_UNSPECIFIED)) {
+        // FIXME: set error???
+        g_assert_not_reached();
+    }
+
+    desc.activity = SW_DESC_ACTIVITY_COMPL;
+    desc.length = data->size;
+    desc.with_end = 1;
+    desc.connection_error = status == SW_OK ? 0 : 1;
+    desc.valid = 1;
+
+    if (write_dma_desc(s, s->wdma_sys_addr + offset, &desc)) {
+        // FIXME: set error???
+        g_assert_not_reached();
+    }
+
+    // переход на следующий
+    s->wdma_tbl_size -= sizeof(sw_dma_desc_t);
+    if (!s->wdma_tbl_size) {
+        s->wdma_tbl_size = s->wdma_tbl_size_internal;
+    }
+
+    rcm_sw_wdma_recv(s);
+}
+
+static void rcm_sw_write_done(sw_controller *ctr, void *private_data,
+                              sw_data *data, sw_status status)
+{
+    RCMSpaceWireState *s = private_data;
+
+    // взять текущий дескриптор
+    sw_dma_desc_t desc = {0};
+    uint32_t offset =
+        (s->rdma_tbl_size_internal - s->rdma_tbl_size) * sizeof(sw_dma_desc_t);
+
+    if (read_dma_desc(s, s->rdma_sys_addr + offset, &desc)) {
+        // FIXME: set error???
+        g_assert_not_reached();
+    }
+
+    // обработать текущий дескриптор
+    desc.activity = SW_DESC_ACTIVITY_COMPL;
+    desc.length = data->size;
+    desc.connection_error = status == SW_OK ? 0 : 1;
+
+    if (write_dma_desc(s, s->rdma_sys_addr + offset, &desc)) {
+        // FIXME: set error???
+        g_assert_not_reached();
+    }
+
+    dma_memory_unmap(s->addr_space, data->data, s->rdma_len,
+                     DMA_DIRECTION_FROM_DEVICE, data->size);
+
+    // переход на следующий дескриптор
+    s->rdma_tbl_size -= sizeof(sw_dma_desc_t);
+    if (!s->rdma_tbl_size) {
+        s->rdma_tbl_size = s->rdma_tbl_size_internal;
+    }
+
+    rcm_sw_rdma_send(s);
+}
+
+/*
+ * device code
+ */
+static void rcm_sw_realize(DeviceState *dev, Error **errp)
+{
+    RCMSpaceWireState *s = RCM_SPACEWIRE(dev);
+    SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
+
+    memory_region_init_io(&s->iomem, OBJECT(dev), &rcm_sw_ops, s, "rcm_spacewire",
+                          0x1000);
+    sysbus_init_mmio(sbd, &s->iomem);
+
+    /* TODO: придумать как передавать аргументы для подключения */
+    { /* FIXME: временное решение */
+        static int port = 8890;
+        char ip_port[32];
+        snprintf(ip_port, sizeof(ip_port), "0.0.0.0:%u", port++);
+        printf("spacewire[%u] ip:port are %s\n", port - 8891, ip_port);
+        s->sw_ctrl = sw_new(ip_port);
+    }
+    if (sw_start_thread(s->sw_ctrl, rcm_sw_read_done, rcm_sw_write_done, s)) {
+        error_setg(errp, "Couldn't create virtsw thread\n");
+    }
+
+    // set default address space
+    if (s->addr_space == NULL) {
+        s->addr_space = &address_space_memory;
+    }
+}
+
+void rcm_sw_change_address_space(RCMSpaceWireState *s, AddressSpace *addr_space,
+                                 Error **errp)
+{
+    if (object_property_get_bool(OBJECT(s), "realized", errp)) {
+        error_setg(errp, "Can't change address_space of realized device\n");
+    }
+
+    s->addr_space = addr_space;
+}
+
+static void rcm_sw_class_init(ObjectClass *klass, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(klass);
+
+    dc->desc = "RC Module spacewire controller";
+    dc->realize = rcm_sw_realize;
+    dc->reset = rcm_sw_reset;
+}
+
+static const TypeInfo rcm_sw_info = {
+    .name = TYPE_RCM_SPACEWIRE,
+    .parent = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(RCMSpaceWireState),
+    .class_init = rcm_sw_class_init,
+};
+
+static void rcm_sw_register_type(void)
+{
+    type_register_static(&rcm_sw_info);
+}
+
+type_init(rcm_sw_register_type)

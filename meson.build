@@ -1890,6 +1890,12 @@ if not get_option('libdw').auto() or \
                        required: get_option('libdw'))
 endif
 
+virtsw = not_found
+if not get_option('virtsw').auto() or have_system
+  virtsw = dependency('virtsw', required: get_option('virtsw'),
+                       method: 'pkg-config')
+endif
+
 #################
 # config-host.h #
 #################
@@ -2097,6 +2103,7 @@ if glusterfs.found()
 endif
 config_host_data.set('CONFIG_GTK', gtk.found())
 config_host_data.set('CONFIG_VTE', vte.found())
+config_host_data.set('CONFIG_VIRTSW', virtsw.found())
 config_host_data.set('CONFIG_GTK_CLIPBOARD', have_gtk_clipboard)
 config_host_data.set('CONFIG_HEXAGON_IDEF_PARSER', get_option('hexagon_idef_parser'))
 config_host_data.set('CONFIG_LIBATTR', have_old_libattr)
@@ -2844,7 +2851,8 @@ host_kconfig = \
   ('CONFIG_LINUX' in config_host ? ['CONFIG_LINUX=y'] : []) + \
   (have_pvrdma ? ['CONFIG_PVRDMA=y'] : []) + \
   (multiprocess_allowed ? ['CONFIG_MULTIPROCESS_ALLOWED=y'] : []) + \
-  (vfio_user_server_allowed ? ['CONFIG_VFIO_USER_SERVER_ALLOWED=y'] : [])
+  (vfio_user_server_allowed ? ['CONFIG_VFIO_USER_SERVER_ALLOWED=y'] : []) + \
+  (virtsw.found() ? ['CONFIG_VIRTSW=y'] : [])
 
 ignored = [ 'TARGET_XML_FILES', 'TARGET_ABI_DIR', 'TARGET_ARCH' ]
 
@@ -4315,6 +4323,7 @@ summary_info += {'libudev':           libudev}
 summary_info += {'FUSE lseek':        fuse_lseek.found()}
 summary_info += {'selinux':           selinux}
 summary_info += {'libdw':             libdw}
+summary_info += {'virtsw support':  virtsw}
 summary(summary_info, bool_yn: true, section: 'Dependencies')
 
 if not supported_cpus.contains(cpu)

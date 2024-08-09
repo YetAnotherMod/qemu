@@ -178,3 +178,4 @@ config MT174
     select PL061 # GPIO
     select GRETH
     select PFLASH_CFI02
+    select RCM_SPACEWIRE if VIRTSW

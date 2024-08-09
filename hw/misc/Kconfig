@@ -186,4 +186,8 @@ config AXP2XX_PMU
     bool
     depends on I2C
 
+config RCM_SPACEWIRE
+    bool
+    depends on VIRTSW
+
 source macio/Kconfig
