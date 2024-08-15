@@ -353,3 +353,6 @@ option('hexagon_idef_parser', type : 'boolean', value : true,
 
 option('virtsw', type: 'feature', value: 'auto',
        description: 'virtsw support')
+
+option('virtmko', type: 'feature', value: 'auto',
+       description: 'virtmko support')

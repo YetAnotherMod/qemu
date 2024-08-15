@@ -191,6 +191,7 @@ meson_options_help() {
   printf "%s\n" '  virtfs-proxy-helper'
   printf "%s\n" '                  virtio-9p proxy helper support'
   printf "%s\n" '  virtsw          virtsw support'
+  printf "%s\n" '  virtmko         virtmko support'
   printf "%s\n" '  vmdk            vmdk image format support'
   printf "%s\n" '  vmnet           vmnet.framework network backend support'
   printf "%s\n" '  vnc             VNC server'
@@ -500,6 +501,8 @@ _meson_option_parse() {
     --disable-virtfs-proxy-helper) printf "%s" -Dvirtfs_proxy_helper=disabled ;;
     --enable-virtsw) printf "%s" -Dvirtsw=enabled ;;
     --disable-virtsw) printf "%s" -Dvirtsw=disabled ;;
+    --enable-virtmko) printf "%s" -Dvirtmko=enabled ;;
+    --disable-virtmko) printf "%s" -Dvirtmko=disabled ;;
     --enable-vmdk) printf "%s" -Dvmdk=enabled ;;
     --disable-vmdk) printf "%s" -Dvmdk=disabled ;;
     --enable-vmnet) printf "%s" -Dvmnet=enabled ;;

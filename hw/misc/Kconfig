@@ -191,3 +191,7 @@ config RCM_SPACEWIRE
     depends on VIRTSW
 
 source macio/Kconfig
+
+config GR1553B
+    bool
+    depends on VIRTMKO

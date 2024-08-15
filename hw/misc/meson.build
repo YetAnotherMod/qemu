@@ -148,3 +148,6 @@ system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
 
 system_ss.add(when: 'CONFIG_RCM_SPACEWIRE', if_true: files('rcm_spacewire.c'))
 system_ss.add(when: 'CONFIG_RCM_SPACEWIRE', if_true: virtsw )
+
+system_ss.add(when: 'CONFIG_GR1553B', if_true: files('gr1553b.c'))
+system_ss.add(when: 'CONFIG_GR1553B', if_true: virtmko )

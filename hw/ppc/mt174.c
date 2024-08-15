@@ -23,6 +23,12 @@
 
 #define SW_COUNT 4
 
+#ifdef CONFIG_VIRTMKO
+    #include "hw/misc/gr1553b.h"
+#endif
+
+#define MKO_COUNT 4
+
 typedef struct {
     MachineState parent;
 
@@ -40,6 +46,10 @@ typedef struct {
 
 #ifdef CONFIG_VIRTSW
     RCMSpaceWireState sw[SW_COUNT];
+#endif
+
+#ifdef CONFIG_VIRTMKO
+    GR1553BState mko[MKO_COUNT];
 #endif
 
     /* board properties */
@@ -317,6 +327,40 @@ static void add_spacewire_controllers(MT174MachineState *s,
 }
 #endif
 
+#ifdef CONFIG_VIRTMKO
+static void add_mko_controllers(MT174MachineState *s) {
+    hwaddr addr[MKO_COUNT] = {
+        0x20c0020000u, 0x20c0030000u, 0x20c0021000u, 0x20c0031000u
+    };
+    int irq_line[MKO_COUNT] = { 38, 39, 54, 55 };
+    char name[8];
+
+    for (uint32_t i = 0; i < MKO_COUNT; i++) {
+        snprintf(name, sizeof(name), "mko[%u]", i);
+        object_initialize_child(OBJECT(s), name, &s->mko[i], TYPE_GR1553B);
+        sysbus_realize(SYS_BUS_DEVICE(&s->mko[i]), &error_fatal);
+        SysBusDevice *busdev = SYS_BUS_DEVICE(&s->mko[i]);
+        memory_region_add_subregion(get_system_memory(), addr[i],
+                                    sysbus_mmio_get_region(busdev, 0));
+        sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), irq_line[i]));
+    }
+}
+#else
+static void add_mko_controllers(MT174MachineState *s) {
+    hwaddr addr[MKO_COUNT] = {
+        0x20c0020000u, 0x20c0030000u, 0x20c0021000u, 0x20c0031000u
+    };
+    char name[8];
+
+    for (uint32_t i = 0; i < MKO_COUNT; i++) {
+        snprintf(name, sizeof(name), "mko[%u]", i);
+        MemoryRegion *mko = g_new(MemoryRegion, 1);
+        memory_region_init_ram(mko, NULL, name, 4 * KiB, &error_fatal);
+        memory_region_add_subregion(get_system_memory(), addr[i], mko);
+    }
+}
+#endif
+
 static void mt174_init(MachineState *machine)
 {
     MT174MachineState *s = MT174_MACHINE(machine);
@@ -428,13 +472,7 @@ static void mt174_init(MachineState *machine)
     memory_region_init_alias(IM1_on_AXI, NULL, "IM1_on_AXI", IM1, 0, 128 * KiB);
     memory_region_add_subregion(axi_mem, 0xc0000000, IM1_on_AXI);
 
-    MemoryRegion *mko0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(mko0, NULL, "mko0", 4 * KiB, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c0020000, mko0);
-
-    MemoryRegion *mko2 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(mko2, NULL, "mko2", 4 * KiB, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c0021000, mko2);
+    add_mko_controllers(s);
 
     s->gpio[0] = sysbus_create_simple("pl061", 0x20c0028000,
                                       qdev_get_gpio_in(DEVICE(&s->mpic), 32));
@@ -498,14 +536,6 @@ static void mt174_init(MachineState *machine)
         qdev_realize_and_unref(card, qdev_get_child_bus(DEVICE(&s->sdio), "sd-bus"),
                                &error_fatal);
     }
-
-    MemoryRegion *mko1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(mko1, NULL, "mko1", 4 * KiB, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c0030000, mko1);
-
-    MemoryRegion *mko3 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(mko3, NULL, "mko3", 4 * KiB, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c0031000, mko3);
 
     s->gpio[1] = sysbus_create_simple("pl061", 0x20c0038000,
                                       qdev_get_gpio_in(DEVICE(&s->mpic), 33));
