@@ -652,9 +652,9 @@ static void mt174_reset(MachineState *machine, ShutdownCause reason)
     }
 
     // Set GPIO0 pins
-    uint32_t boot_cfg = s->boot_cfg;
+    uint8_t boot_cfg = s->boot_cfg;
     for (int i = 0; boot_cfg; i++, boot_cfg >>= 1) {
-        if (boot_cfg & (1<<i)) {
+        if (boot_cfg & 1) {
             qemu_irq_raise(qdev_get_gpio_in(s->gpio[0], i));
         }
     }
