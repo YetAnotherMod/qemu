@@ -96,7 +96,17 @@ static int ppc_gdb_register_len(int n)
 void ppc_maybe_bswap_register(CPUPPCState *env, uint8_t *mem_buf, int len)
 {
 #ifndef CONFIG_USER_ONLY
-    if (!FIELD_EX64(env->msr, MSR, LE)) {
+    bool le_page = false;
+
+    if (env->mmu_model == POWERPC_MMU_476FP) {
+        mmu_ctx_t ctx = {.prot = 0};
+        get_physical_address_wtlb(env, &ctx, env->nip, MMU_INST_FETCH, 0,
+                                  cpu_mmu_index(env, true));
+
+        le_page = ctx.prot & PAGE_LE ? true : false;
+    }
+
+    if (!FIELD_EX64(env->msr, MSR, LE) && !le_page) {
         /* do nothing */
     } else if (len == 4) {
         bswap32s((uint32_t *)mem_buf);
