@@ -431,9 +431,12 @@ static void rcm_sw_read_done(sw_controller *ctr, void *private_data,
         g_assert_not_reached();
     }
 
+    bool desc_interrupt = desc.interrupt ? true : false;
+
     desc.activity = SW_DESC_ACTIVITY_COMPL;
     desc.length = data->size;
     desc.with_end = 1;
+    desc.parity_error = 0;
     desc.connection_error = status == SW_OK ? 0 : 1;
     desc.valid = 1;
 
@@ -442,7 +445,7 @@ static void rcm_sw_read_done(sw_controller *ctr, void *private_data,
         g_assert_not_reached();
     }
 
-    if (desc.interrupt &&
+    if (desc_interrupt &&
         (qatomic_read(&s->wdma_settings) & SW_RWDMA_SETTINGS_DESC_INT)) {
         qatomic_or(&s->wdma_status, SW_RWDMA_SETTINGS_DESC_INT);
         qatomic_or(&s->adma_ch_status, SW_ADMA_CH_STATUS_WDMA_IRQ);
@@ -472,6 +475,8 @@ static void rcm_sw_write_done(sw_controller *ctr, void *private_data,
         g_assert_not_reached();
     }
 
+    bool desc_interrupt = desc.interrupt ? true : false;
+
     // обработать текущий дескриптор
     desc.activity = SW_DESC_ACTIVITY_COMPL;
     desc.length = data->size;
@@ -485,7 +490,7 @@ static void rcm_sw_write_done(sw_controller *ctr, void *private_data,
     dma_memory_unmap(s->addr_space, data->data, s->rdma_len,
                      DMA_DIRECTION_FROM_DEVICE, data->size);
 
-    if (desc.interrupt &&
+    if (desc_interrupt &&
         (qatomic_read(&s->rdma_settings) & SW_RWDMA_SETTINGS_DESC_INT)) {
         qatomic_or(&s->rdma_status, SW_RWDMA_SETTINGS_DESC_INT);
         qatomic_or(&s->adma_ch_status, SW_ADMA_CH_STATUS_RDMA_IRQ);
