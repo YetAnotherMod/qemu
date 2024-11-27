@@ -292,8 +292,14 @@ static void cpu_reset_temp(void *opaque)
 static void add_spacewire_controllers(MT174MachineState *s,
                                       AddressSpace *addr_space)
 {
-    hwaddr addr[SW_COUNT] = {
+    const hwaddr addr[SW_COUNT] = {
         0x20c0300000u, 0x20c0301000u, 0x20c0302000u, 0x20c0303000u
+    };
+    const int irq_line[SW_COUNT][2] = {
+        { 44, 45 },
+        { 46, 47 },
+        { 48, 49 },
+        { 50, 51 },
     };
     char name[8];
 
@@ -305,13 +311,15 @@ static void add_spacewire_controllers(MT174MachineState *s,
         SysBusDevice *busdev = SYS_BUS_DEVICE(&s->sw[i]);
         memory_region_add_subregion(get_system_memory(), addr[i],
                                     sysbus_mmio_get_region(busdev, 0));
+        sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), irq_line[i][0]));
+        sysbus_connect_irq(busdev, 1, qdev_get_gpio_in(DEVICE(&s->mpic), irq_line[i][1]));
     }
 }
 #else
 static void add_spacewire_controllers(MT174MachineState *s,
                                       AddressSpace *addr_space)
 {
-    hwaddr addr[SW_COUNT] = {
+    const hwaddr addr[SW_COUNT] = {
         0x20c0300000u, 0x20c0301000u, 0x20c0302000u, 0x20c0303000u
     };
     char name[8];
