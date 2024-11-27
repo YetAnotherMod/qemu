@@ -58,6 +58,8 @@ typedef struct {
 	uint32_t vitc_crit_border;
 	uint32_t vitc_mcheck_border;
 
+	uint32_t raw_int_debug;
+
 	// spurious vector
 	uint32_t spv;
 

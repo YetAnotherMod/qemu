@@ -103,6 +103,8 @@
 #define MPIC_FRG            (127 << (31 - 15) | 3 << (31 - 23) | 2)
 #define DCR_BAS             0xf
 
+#define RAW_INT_DEBUG_MASK 0x7
+
 #define TIMER_0_INDEX       (EXT_SOURCE_NUM + 0)
 #define TIMER_1_INDEX       (EXT_SOURCE_NUM + 1)
 #define TIMER_2_INDEX       (EXT_SOURCE_NUM + 2)
@@ -237,6 +239,8 @@ static void mpic_reset(MpicState *s)
     s->vitc_crit_border = VITC_BORDER_DEFAULT;
     s->vitc_mcheck_border = VITC_BORDER_DEFAULT;
 
+    s->raw_int_debug = 0;
+
     memset(s->pending_irqs, 0, sizeof(s->pending_irqs));
 
     for (int i = 0; i < OUTPUT_IRQ_NUM; i++) {
@@ -350,6 +354,21 @@ static void mpic_set_timer_base(MpicState *s, uint32_t index, uint32_t new_val)
     }
 }
 
+static uint32_t mpic_get_raw_int_debug_reg(MpicState *s)
+{
+    uint32_t start_irq = 20 * s->raw_int_debug;
+    uint32_t res = 0;
+
+    for (unsigned int i = 0, j = 1 << 31; i < 20; i++, j >>= 1) {
+        if (s->irq[start_irq + i].pending) {
+            res |= j;
+        }
+    }
+
+    return res | s->raw_int_debug;
+
+}
+
 static uint32_t mpic_dcr_read (void *opaque, int dcrn)
 {
     MpicState *s = MPIC(opaque);
@@ -382,6 +401,9 @@ static uint32_t mpic_dcr_read (void *opaque, int dcrn)
 
     case REG_VENDOR_INT_TYPE:
         return s->vitc_mcheck_border << VITC_MCHECK_SHIFT | s->vitc_crit_border;
+
+    case REG_RAW_INT_DEBUG:
+        return mpic_get_raw_int_debug_reg(s);
 
     case REG_IPI_VP_0:
         return mpic_get_internal_vp_reg(s, IPI_0_INDEX);
@@ -507,6 +529,10 @@ static void mpic_dcr_write (void *opaque, int dcrn, uint32_t val)
     case REG_VENDOR_INT_TYPE:
         s->vitc_crit_border = val & VITC_BORDER_MASK;
         s->vitc_mcheck_border = (val >> VITC_MCHECK_SHIFT) & VITC_BORDER_MASK;
+        goto end;
+
+    case REG_RAW_INT_DEBUG:
+        s->raw_int_debug = val & RAW_INT_DEBUG_MASK;
         goto end;
 
     // Processor Initialization Register (PINI) ??
