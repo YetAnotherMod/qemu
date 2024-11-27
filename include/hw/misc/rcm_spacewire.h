@@ -17,20 +17,24 @@ struct RCMSpaceWireState {
     MemoryRegion iomem;
 
     uint32_t settings;
+    uint32_t adma_ch_status; /* access using atomics */
 
     uint32_t rdma_settings; /* access using atomics */
-    uint32_t rdma_status;
+    uint32_t rdma_status; /* access using atomics */
     uint32_t rdma_sys_addr;
     uint32_t rdma_tbl_size;
     uint32_t rdma_tbl_size_internal;
     int rdma_active; /* access using atomics */
 
     uint32_t wdma_settings; /* access using atomics */
-    uint32_t wdma_status;
+    uint32_t wdma_status; /* access using atomics */
     uint32_t wdma_sys_addr;
     uint32_t wdma_tbl_size;
     uint32_t wdma_tbl_size_internal;
     int wdma_active; /* access using atomics */
+
+    qemu_irq core_irq;
+    qemu_irq dma_irq;
 
     /* virtsw */
     sw_controller *sw_ctrl;

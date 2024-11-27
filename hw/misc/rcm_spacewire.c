@@ -4,6 +4,7 @@
  */
 #include "qemu/osdep.h"
 #include "qapi/error.h"
+#include "hw/irq.h"
 
 #include "hw/misc/rcm_spacewire.h"
 
@@ -13,6 +14,7 @@
 #define SW_REG_SETTINGS 0xc
 #define SW_REG_STATUS 0x10
 #define SW_REG_ADMA_RESET 0x808
+#define SW_REG_ADMA_CH_STATUS 0x80c
 
 #define SW_REG_RDMA_SETTINGS 0x900
 #define SW_REG_RDMA_STATUS 0x904
@@ -35,11 +37,18 @@
     (SW_SETTINGS_ENABLE | SW_SETTINGS_TX_ENDIAN | SW_SETTINGS_RX_ENDIAN | \
      SW_SETTINGS_LOOPBACK)
 
+#define SW_ADMA_CH_STATUS_RDMA_IRQ (1u << 0)
+#define SW_ADMA_CH_STATUS_WDMA_IRQ (1u << 16)
+#define SW_ADMA_CH_STATUS_ANY_IRQ \
+    (SW_ADMA_CH_STATUS_RDMA_IRQ | SW_ADMA_CH_STATUS_WDMA_IRQ)
+
+#define SW_RWDMA_SETTINGS_DESC_INT (1u << 0)
 #define SW_RWDMA_SETTINGS_ENABLE (1u << 28)
 #define SW_RWDMA_SETTINGS_DESC_TBL (1u << 29)
 #define SW_RWDMA_SETTINGS_LONG_LEN (1u << 30)
 #define SW_RWDMA_SETTINGS_MASK \
-    (SW_RWDMA_SETTINGS_ENABLE | SW_RWDMA_SETTINGS_DESC_TBL | SW_RWDMA_SETTINGS_LONG_LEN)
+    (SW_RWDMA_SETTINGS_DESC_INT | SW_RWDMA_SETTINGS_ENABLE | \
+     SW_RWDMA_SETTINGS_DESC_TBL | SW_RWDMA_SETTINGS_LONG_LEN)
 
 #define SW_DESC_ACTIVITY_TRAN 0x2
 #define SW_DESC_ACTIVITY_COMPL 0x1
@@ -89,9 +98,36 @@ static int write_dma_desc(RCMSpaceWireState *s, dma_addr_t addr, sw_dma_desc_t *
 /*
  * controller logic
  */
+static void rcm_sw_update_irq(RCMSpaceWireState *s)
+{
+    // TODO: add core_irq functionality
+    qemu_irq_lower(s->core_irq);
+
+    if (qatomic_read(&s->adma_ch_status) & SW_ADMA_CH_STATUS_ANY_IRQ) {
+        qemu_irq_raise(s->dma_irq);
+    } else {
+        qemu_irq_lower(s->dma_irq);
+    }
+}
+
 static void rcm_sw_soft_reset(RCMSpaceWireState *s)
 {
     s->settings = 0;
+    qatomic_set(&s->rdma_settings, 0);
+    qatomic_set(&s->wdma_settings, 0);
+    qatomic_set(&s->adma_ch_status, 0);
+    qatomic_set(&s->rdma_status, 0);
+    qatomic_set(&s->wdma_status, 0);
+    s->rdma_sys_addr = 0;
+    s->wdma_sys_addr = 0;
+    s->rdma_tbl_size = 0x800;
+    s->rdma_tbl_size_internal = 0x800;
+    s->wdma_tbl_size = 0x800;
+    s->wdma_tbl_size_internal = 0x800;
+    qatomic_set(&s->rdma_active, false);
+    qatomic_set(&s->wdma_active, false);
+
+    rcm_sw_update_irq(s);
 }
 
 static void rcm_sw_wdma_recv(RCMSpaceWireState *s)
@@ -107,8 +143,7 @@ static void rcm_sw_wdma_recv(RCMSpaceWireState *s)
 
     // взять очередной дескриптор
     sw_dma_desc_t desc = {0};
-    uint32_t offset =
-        (s->wdma_tbl_size_internal - s->wdma_tbl_size) * sizeof(sw_dma_desc_t);
+    uint32_t offset = s->wdma_tbl_size_internal - s->wdma_tbl_size;
 
     if (read_dma_desc(s, s->wdma_sys_addr + offset, &desc)) {
         // FIXME: set error???
@@ -155,8 +190,7 @@ static void rcm_sw_rdma_send(RCMSpaceWireState *s)
 
     // взять очередной дескриптор
     sw_dma_desc_t desc = {0};
-    uint32_t offset =
-        (s->rdma_tbl_size_internal - s->rdma_tbl_size) * sizeof(sw_dma_desc_t);
+    uint32_t offset = s->rdma_tbl_size_internal - s->rdma_tbl_size;
 
     if (read_dma_desc(s, s->rdma_sys_addr + offset, &desc)) {
         // FIXME: set error???
@@ -231,12 +265,17 @@ static uint64_t rcm_sw_read(void *opaque, hwaddr offset, unsigned size)
         val = s->settings;
         break;
 
+    case SW_REG_ADMA_CH_STATUS:
+        val = qatomic_xchg(&s->adma_ch_status, 0);
+        rcm_sw_update_irq(s);
+        break;
+
     case SW_REG_RDMA_SETTINGS:
         val = qatomic_read(&s->rdma_settings);
         break;
 
     case SW_REG_RDMA_STATUS:
-        val = s->rdma_status;
+        val = qatomic_xchg(&s->rdma_status, 0);
         break;
 
     case SW_REG_WDMA_SETTINGS:
@@ -244,7 +283,7 @@ static uint64_t rcm_sw_read(void *opaque, hwaddr offset, unsigned size)
         break;
 
     case SW_REG_WDMA_STATUS:
-        val = s->wdma_status;
+        val = qatomic_xchg(&s->wdma_status, 0);
         break;
 
     case SW_REG_RDMA_SYS_ADDR:
@@ -305,10 +344,6 @@ static void rcm_sw_write(void *opaque, hwaddr offset, uint64_t val, unsigned siz
         }
         break;
 
-    case SW_REG_RDMA_STATUS:
-        s->rdma_status = val;
-        break;
-
     case SW_REG_WDMA_SETTINGS:
         qatomic_or(&s->wdma_settings, SW_RWDMA_SETTINGS_MASK);
 
@@ -318,10 +353,6 @@ static void rcm_sw_write(void *opaque, hwaddr offset, uint64_t val, unsigned siz
                 rcm_sw_wdma_recv(s);
             }
         }
-        break;
-
-    case SW_REG_WDMA_STATUS:
-        s->wdma_status = val;
         break;
 
     case SW_REG_RDMA_SYS_ADDR:
@@ -386,8 +417,7 @@ static void rcm_sw_read_done(sw_controller *ctr, void *private_data,
 
     // взять текущий дескриптор
     sw_dma_desc_t desc = {0};
-    uint32_t offset =
-        (s->wdma_tbl_size_internal - s->wdma_tbl_size) * sizeof(sw_dma_desc_t);
+    uint32_t offset = s->wdma_tbl_size_internal - s->wdma_tbl_size;
 
     if (read_dma_desc(s, s->wdma_sys_addr + offset, &desc)) {
         // FIXME: set error???
@@ -412,6 +442,13 @@ static void rcm_sw_read_done(sw_controller *ctr, void *private_data,
         g_assert_not_reached();
     }
 
+    if (desc.interrupt &&
+        (qatomic_read(&s->wdma_settings) & SW_RWDMA_SETTINGS_DESC_INT)) {
+        qatomic_or(&s->wdma_status, SW_RWDMA_SETTINGS_DESC_INT);
+        qatomic_or(&s->adma_ch_status, SW_ADMA_CH_STATUS_WDMA_IRQ);
+        rcm_sw_update_irq(s);
+    }
+
     // переход на следующий
     s->wdma_tbl_size -= sizeof(sw_dma_desc_t);
     if (!s->wdma_tbl_size) {
@@ -428,8 +465,7 @@ static void rcm_sw_write_done(sw_controller *ctr, void *private_data,
 
     // взять текущий дескриптор
     sw_dma_desc_t desc = {0};
-    uint32_t offset =
-        (s->rdma_tbl_size_internal - s->rdma_tbl_size) * sizeof(sw_dma_desc_t);
+    uint32_t offset = s->rdma_tbl_size_internal - s->rdma_tbl_size;
 
     if (read_dma_desc(s, s->rdma_sys_addr + offset, &desc)) {
         // FIXME: set error???
@@ -448,6 +484,13 @@ static void rcm_sw_write_done(sw_controller *ctr, void *private_data,
 
     dma_memory_unmap(s->addr_space, data->data, s->rdma_len,
                      DMA_DIRECTION_FROM_DEVICE, data->size);
+
+    if (desc.interrupt &&
+        (qatomic_read(&s->rdma_settings) & SW_RWDMA_SETTINGS_DESC_INT)) {
+        qatomic_or(&s->rdma_status, SW_RWDMA_SETTINGS_DESC_INT);
+        qatomic_or(&s->adma_ch_status, SW_ADMA_CH_STATUS_RDMA_IRQ);
+        rcm_sw_update_irq(s);
+    }
 
     // переход на следующий дескриптор
     s->rdma_tbl_size -= sizeof(sw_dma_desc_t);
@@ -469,6 +512,8 @@ static void rcm_sw_realize(DeviceState *dev, Error **errp)
     memory_region_init_io(&s->iomem, OBJECT(dev), &rcm_sw_ops, s, "rcm_spacewire",
                           0x1000);
     sysbus_init_mmio(sbd, &s->iomem);
+    sysbus_init_irq(sbd, &s->core_irq);
+    sysbus_init_irq(sbd, &s->dma_irq);
 
     /* TODO: придумать как передавать аргументы для подключения */
     { /* FIXME: временное решение */
