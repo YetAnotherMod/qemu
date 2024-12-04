@@ -449,7 +449,9 @@ static void rcm_sw_read_done(sw_controller *ctr, void *private_data,
         (qatomic_read(&s->wdma_settings) & SW_RWDMA_SETTINGS_DESC_INT)) {
         qatomic_or(&s->wdma_status, SW_RWDMA_SETTINGS_DESC_INT);
         qatomic_or(&s->adma_ch_status, SW_ADMA_CH_STATUS_WDMA_IRQ);
+        qemu_mutex_lock_iothread();
         rcm_sw_update_irq(s);
+        qemu_mutex_unlock_iothread();
     }
 
     // переход на следующий
@@ -494,7 +496,9 @@ static void rcm_sw_write_done(sw_controller *ctr, void *private_data,
         (qatomic_read(&s->rdma_settings) & SW_RWDMA_SETTINGS_DESC_INT)) {
         qatomic_or(&s->rdma_status, SW_RWDMA_SETTINGS_DESC_INT);
         qatomic_or(&s->adma_ch_status, SW_ADMA_CH_STATUS_RDMA_IRQ);
+        qemu_mutex_lock_iothread();
         rcm_sw_update_irq(s);
+        qemu_mutex_unlock_iothread();
     }
 
     // переход на следующий дескриптор

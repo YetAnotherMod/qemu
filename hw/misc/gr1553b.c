@@ -426,7 +426,9 @@ static void exec_msg_desc(GR1553BState *s, bc_trans_desc_t *desc)
     if (desc->result.tfrst) {
         if (desc->word0.irqe) {
             qatomic_or(&s->reg_irq, IRQ_BCEV);
+            qemu_mutex_lock_iothread();
             gr1553b_update_irq(s);
+            qemu_mutex_unlock_iothread();
         }
 
         if (desc->word0.suse) {
@@ -437,7 +439,9 @@ static void exec_msg_desc(GR1553BState *s, bc_trans_desc_t *desc)
     } else {
         if (desc->word0.irqn) {
             qatomic_or(&s->reg_irq, IRQ_BCEV);
+            qemu_mutex_lock_iothread();
             gr1553b_update_irq(s);
+            qemu_mutex_unlock_iothread();
         }
 
         if (desc->word0.susn) {
@@ -484,7 +488,9 @@ static uint32_t exec_branch_desc(GR1553BState *s, bc_trans_desc_t *desc,
 
     if (desc->condition.irqc) {
         qatomic_or(&s->reg_irq, IRQ_BCEV);
+        qemu_mutex_lock_iothread();
         gr1553b_update_irq(s);
+        qemu_mutex_unlock_iothread();
     }
 
     if (desc->condition.act) {
