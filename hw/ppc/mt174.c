@@ -16,6 +16,7 @@
 #include "hw/irq.h"
 #include "exec/memory.h"
 #include "exec/address-spaces.h"
+#include "hw/misc/commport.h"
 
 #ifdef CONFIG_VIRTSW
     #include "hw/misc/rcm_spacewire.h"
@@ -43,6 +44,8 @@ typedef struct {
     GRETHState greth[2];
 
     KeyasicSdState sdio;
+
+    CommState comm[2];
 
 #ifdef CONFIG_VIRTSW
     RCMSpaceWireState sw[SW_COUNT];
@@ -600,13 +603,31 @@ static void mt174_init(MachineState *machine)
 
     add_spacewire_controllers(s, axi_addr_space);
 
-    MemoryRegion *COM0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(COM0, NULL, "COM0", 4 * KiB, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c0304000, COM0);
+    if (qemu_chr_find("NMCOMM0")) {
+        object_initialize_child(OBJECT(s), "comm0", &s->comm[0], TYPE_COMM);
+        comm_change_address_space(&s->comm[0], axi_addr_space, &error_fatal);
+        qdev_prop_set_chr(DEVICE(&s->comm[0]), "CommChardev", qemu_chr_find("NMCOMM0"));
+        qdev_prop_set_uint8(DEVICE(&s->comm[0]), "RegistersMode", 1);
+        sysbus_realize(SYS_BUS_DEVICE(&s->comm[0]), &error_fatal);
+        busdev = SYS_BUS_DEVICE(&s->comm[0]);
+        memory_region_add_subregion(get_system_memory(), 0x20c0304000,
+                                    sysbus_mmio_get_region(busdev, 0));
+        sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 79));
+        sysbus_connect_irq(busdev, 1, qdev_get_gpio_in(DEVICE(&s->mpic), 78));
+    }
 
-    MemoryRegion *COM1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(COM1, NULL, "COM1", 4 * KiB, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c0305000, COM1);
+    if (qemu_chr_find("NMCOMM1")) {
+        object_initialize_child(OBJECT(s), "comm1", &s->comm[1], TYPE_COMM);
+        comm_change_address_space(&s->comm[1], axi_addr_space, &error_fatal);
+        qdev_prop_set_chr(DEVICE(&s->comm[1]), "CommChardev", qemu_chr_find("NMCOMM1"));
+        qdev_prop_set_uint8(DEVICE(&s->comm[1]), "RegistersMode", 1);
+        sysbus_realize(SYS_BUS_DEVICE(&s->comm[1]), &error_fatal);
+        busdev = SYS_BUS_DEVICE(&s->comm[1]);
+        memory_region_add_subregion(get_system_memory(), 0x20c0305000,
+                                    sysbus_mmio_get_region(busdev, 0));
+        sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 81));
+        sysbus_connect_irq(busdev, 1, qdev_get_gpio_in(DEVICE(&s->mpic), 80));
+    }
 
     MemoryRegion *AXI_DMA = g_new(MemoryRegion, 1);
     memory_region_init_ram(AXI_DMA, NULL, "AXI_DMA", 4 * KiB, &error_fatal);
