@@ -180,3 +180,4 @@ config MT174
     select PFLASH_CFI02
     select RCM_SPACEWIRE if VIRTSW
     select GR1553B if VIRTMKO
+    select COMMPORT

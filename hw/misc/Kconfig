@@ -195,3 +195,6 @@ source macio/Kconfig
 config GR1553B
     bool
     depends on VIRTMKO
+
+config COMMPORT
+    bool
