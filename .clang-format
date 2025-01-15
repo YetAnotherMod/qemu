@@ -1,0 +1,13 @@
+---
+Language: Cpp
+BasedOnStyle: Chromium
+AllowShortFunctionsOnASingleLine: None
+BinPackParameters: true
+BraceWrapping:
+  AfterFunction: true
+BreakBeforeBraces: Custom
+IndentCaseLabels: false
+IndentWidth: 4
+PointerAlignment: Right
+SortIncludes: Never
+...
