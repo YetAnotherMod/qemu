@@ -20,6 +20,9 @@ config SPAPR_RNG
     default y
     depends on PSERIES
 
+config PLB6_DMA
+    bool
+
 config POWERNV
     bool
     imply PCI_DEVICES
@@ -181,3 +184,4 @@ config MT174
     select RCM_SPACEWIRE if VIRTSW
     select GR1553B if VIRTMKO
     select COMMPORT
+    select PLB6_DMA
