@@ -7,6 +7,7 @@ ppc_ss.add(when: 'CONFIG_FDT_PPC', if_true: [files(
   'fdt.c',
 ), fdt])
 ppc_ss.add(when: 'CONFIG_FW_CFG_PPC', if_true: files('fw_cfg.c'))
+ppc_ss.add(when: 'CONFIG_PLB6_DMA', if_true: files('plb6_dma.c'))
 
 # IBM pSeries (sPAPR)
 ppc_ss.add(when: 'CONFIG_PSERIES', if_true: files(

@@ -17,6 +17,7 @@
 #include "exec/memory.h"
 #include "exec/address-spaces.h"
 #include "hw/misc/commport.h"
+#include "hw/ppc/plb6_dma.h"
 
 #ifdef CONFIG_VIRTSW
     #include "hw/misc/rcm_spacewire.h"
@@ -34,6 +35,8 @@ typedef struct {
     MachineState parent;
 
     PowerPCCPU *cpu;
+
+    PLB6DMAState plb6dma;
 
     MpicState mpic;
 
@@ -98,24 +101,6 @@ static void dcr_plb4arb8m_register(CPUPPCState *env, uint32_t base)
     ppc_dcr_register(env, base + 0x4, NULL, plb4arb8m_dcr_read, plb4arb8m_dcr_write);
     ppc_dcr_register(env, base + 0x6, NULL, plb4arb8m_dcr_read, plb4arb8m_dcr_write);
     ppc_dcr_register(env, base + 0x7, NULL, plb4arb8m_dcr_read, plb4arb8m_dcr_write);
-}
-
-static uint32_t dmaplb6_dcr_read (void *opaque, int dcrn)
-{
-    return 0;
-}
-
-static void dmaplb6_dcr_write (void *opaque, int dcrn, uint32_t val)
-{
-}
-
-static void dcr_dmaplb6_register(CPUPPCState *env, uint32_t base)
-{
-    uint32_t i;
-
-    for (i = 0; i <= 0x4b; i++) {
-        ppc_dcr_register(env, base + i, NULL, dmaplb6_dcr_read, dmaplb6_dcr_write);
-    }
 }
 
 static uint32_t p6bc_dcr_read (void *opaque, int dcrn)
@@ -392,7 +377,6 @@ static void mt174_init(MachineState *machine)
     dcr_unknown16(env, 0x50);
     dcr_plb4arb8m_register(env, 0x00000060);
 
-    dcr_dmaplb6_register(env, 0x80000100);
     dcr_p6bc_register(env, 0x80000200);
     dcr_unknown256(env, 0x80000300);
     dcr_unknown256(env, 0x80000400);
@@ -425,6 +409,14 @@ static void mt174_init(MachineState *machine)
                                 qdev_get_gpio_in(DEVICE(s->cpu), PPC40x_INPUT_INT));
     qdev_connect_gpio_out_named(DEVICE(&s->mpic), "crit_int", 0,
                                 qdev_get_gpio_in(DEVICE(s->cpu), PPC40x_INPUT_CINT));
+
+    object_initialize_child(OBJECT(s), "dmaplb6", &s->plb6dma, TYPE_PLB6_DMA);
+    object_property_set_int(OBJECT(&s->plb6dma), "baseaddr", 0x80000100, &error_fatal);
+    object_property_set_link(OBJECT(&s->plb6dma), "cpu-state", OBJECT(s->cpu), &error_fatal);
+    qdev_realize(DEVICE(&s->plb6dma), NULL, &error_fatal);
+    for (uint32_t i = 0; i < NUMBER_OF_IRQS; i++) {
+        qdev_connect_gpio_out(DEVICE(&s->plb6dma), i, qdev_get_gpio_in(DEVICE(&s->mpic), 3 + i));
+    }
 
     /* Board has separated AXI bus for peripherial devices */
     MemoryRegion *axi_mem = g_new(MemoryRegion, 1);
