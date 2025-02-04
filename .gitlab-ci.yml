@@ -1,7 +1,40 @@
 stages:
   - build
 
-qemu_debian11:
+# yaml anchor to use common config in multiple jobs
+.common_after_part: &common_after_part
+  after_script:
+    - mkdir artifacts
+    - cp build/qemu-system-ppc artifacts
+    - cp pc-bios/module_* artifacts
+    - cp scripts/qemu-ifup artifacts
+  artifacts:
+    paths:
+      - artifacts/*
+    expire_in: 1 day
+
+.common_script_part: &common_script_part
+  # during CI we have no access to external gitlab
+  # change urls to local repos in same group and don't forget to clone them
+  - REPOSITORY_GROUP_URL=$(dirname ${CI_REPOSITORY_URL})
+  - sed -i
+      "s|https://gitlab.com/qemu-project|${REPOSITORY_GROUP_URL}|"
+      subprojects/keycodemapdb.wrap
+  - sed -i
+      "s|https://gitlab.com/qemu-project|${REPOSITORY_GROUP_URL}|"
+      subprojects/berkeley-softfloat-3.wrap
+  - sed -i
+      "s|https://gitlab.com/qemu-project|${REPOSITORY_GROUP_URL}|"
+      subprojects/berkeley-testfloat-3.wrap
+
+  - mkdir build
+  - cd build
+  - ../configure --target-list=ppc-softmmu
+      --disable-vnc --disable-sdl --disable-gnutls --disable-nettle --disable-gtk
+  - make -j
+  - cd -
+
+qemu_deb11:
   stage: build
   image: lrepo.module.ru/debian:11
   before_script:
@@ -18,31 +51,32 @@ qemu_debian11:
         libpixman-1-dev zlib1g-dev ninja-build python3-pip
         curl unzip
 
-    # during CI we have no access to external gitlab
-    # change urls to local repos in same group and don't forget to clone them
-    - REPOSITORY_GROUP_URL=$(dirname ${CI_REPOSITORY_URL})
-    - sed -i
-        "s|https://gitlab.com/qemu-project|${REPOSITORY_GROUP_URL}|"
-        subprojects/keycodemapdb.wrap
-    - sed -i
-        "s|https://gitlab.com/qemu-project|${REPOSITORY_GROUP_URL}|"
-        subprojects/berkeley-softfloat-3.wrap
-    - sed -i
-        "s|https://gitlab.com/qemu-project|${REPOSITORY_GROUP_URL}|"
-        subprojects/berkeley-testfloat-3.wrap
+    - *common_script_part
+  <<: *common_after_part
 
-    - mkdir build
-    - cd build
-    - ../configure --target-list=ppc-softmmu
-        --disable-vnc --disable-sdl --disable-gnutls --disable-nettle --disable-gtk
-    - make -j
-    - cd -
-  after_script:
-    - mkdir artifacts
-    - cp build/qemu-system-ppc artifacts
-    - cp pc-bios/module_* artifacts
-    - cp scripts/qemu-ifup artifacts
-  artifacts:
-    paths:
-      - artifacts/*
-    expire_in: 1 day
+qemu_mko_spacewire_deb11:
+  stage: build
+  image: lrepo.module.ru/debian:11
+  before_script:
+    # INFO: setup clean debian to use local repositories
+    - echo "deb https://lrepo.module.ru/repository/debian bullseye main contrib non-free" > /etc/apt/sources.list
+    - echo "deb https://lrepo.module.ru/repository/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
+    - echo "deb https://lrepo.module.ru/repository/debiansecurity bullseye-security main" >> /etc/apt/sources.list
+    # INFO: ignore certificates issues
+    - echo "Acquire::https::Verify-Peer "false";" >> /etc/apt/apt.conf.d/allowall
+    - echo "Acquire::https::Verify-Host "false";" >> /etc/apt/apt.conf.d/allowall
+    - apt update
+  script:
+    - apt install -y git libglib2.0-dev libfdt-dev
+        libpixman-1-dev zlib1g-dev ninja-build python3-pip
+        curl unzip
+
+    # download virtsw and virtmko library and install it
+    - 'curl --output /artifacts.zip --header "JOB-TOKEN: $CI_JOB_TOKEN"
+        "$CI_API_V4_URL/projects/276/jobs/artifacts/develop/download?job=debian11_64"'
+    - unzip /artifacts.zip -d /
+    - dpkg -i /_packages/emuio-virtsw*.deb
+    - dpkg -i /_packages/emuio-virtmko*.deb
+
+    - *common_script_part
+  <<: *common_after_part
