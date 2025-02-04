@@ -19,6 +19,7 @@ struct RCMSpaceWireState {
     uint32_t settings;
     uint32_t adma_ch_status; /* access using atomics */
 
+    QemuMutex rdma_mutex;
     uint32_t rdma_settings; /* access using atomics */
     uint32_t rdma_status; /* access using atomics */
     uint32_t rdma_sys_addr;
@@ -26,6 +27,7 @@ struct RCMSpaceWireState {
     uint32_t rdma_tbl_size_internal;
     int rdma_active; /* access using atomics */
 
+    QemuMutex wdma_mutex;
     uint32_t wdma_settings; /* access using atomics */
     uint32_t wdma_status; /* access using atomics */
     uint32_t wdma_sys_addr;

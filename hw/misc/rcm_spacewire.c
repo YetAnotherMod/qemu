@@ -318,6 +318,8 @@ static void rcm_sw_write(void *opaque, hwaddr offset, uint64_t val, unsigned siz
         break;
 
     case SW_REG_SETTINGS:
+        qemu_mutex_lock(&s->wdma_mutex);
+        qemu_mutex_lock(&s->rdma_mutex);
         s->settings = val & SW_SETTINGS_MASK;
 
         if (val & SW_SETTINGS_ENABLE) {
@@ -331,9 +333,12 @@ static void rcm_sw_write(void *opaque, hwaddr offset, uint64_t val, unsigned siz
                 rcm_sw_rdma_send(s);
             }
         }
+        qemu_mutex_unlock(&s->rdma_mutex);
+        qemu_mutex_unlock(&s->wdma_mutex);
         break;
 
     case SW_REG_RDMA_SETTINGS:
+        qemu_mutex_lock(&s->rdma_mutex);
         qatomic_or(&s->rdma_settings, SW_RWDMA_SETTINGS_MASK);
 
         if (val & SW_RWDMA_SETTINGS_ENABLE) {
@@ -342,9 +347,11 @@ static void rcm_sw_write(void *opaque, hwaddr offset, uint64_t val, unsigned siz
                 rcm_sw_rdma_send(s);
             }
         }
+        qemu_mutex_unlock(&s->rdma_mutex);
         break;
 
     case SW_REG_WDMA_SETTINGS:
+        qemu_mutex_lock(&s->wdma_mutex);
         qatomic_or(&s->wdma_settings, SW_RWDMA_SETTINGS_MASK);
 
         if (val & SW_RWDMA_SETTINGS_ENABLE) {
@@ -353,6 +360,7 @@ static void rcm_sw_write(void *opaque, hwaddr offset, uint64_t val, unsigned siz
                 rcm_sw_wdma_recv(s);
             }
         }
+        qemu_mutex_unlock(&s->wdma_mutex);
         break;
 
     case SW_REG_RDMA_SYS_ADDR:
@@ -460,7 +468,9 @@ static void rcm_sw_read_done(sw_controller *ctr, void *private_data,
         s->wdma_tbl_size = s->wdma_tbl_size_internal;
     }
 
+    qemu_mutex_lock(&s->wdma_mutex);
     rcm_sw_wdma_recv(s);
+    qemu_mutex_unlock(&s->wdma_mutex);
 }
 
 static void rcm_sw_write_done(sw_controller *ctr, void *private_data,
@@ -507,7 +517,9 @@ static void rcm_sw_write_done(sw_controller *ctr, void *private_data,
         s->rdma_tbl_size = s->rdma_tbl_size_internal;
     }
 
+    qemu_mutex_lock(&s->rdma_mutex);
     rcm_sw_rdma_send(s);
+    qemu_mutex_unlock(&s->rdma_mutex);
 }
 
 /*
@@ -523,6 +535,9 @@ static void rcm_sw_realize(DeviceState *dev, Error **errp)
     sysbus_init_mmio(sbd, &s->iomem);
     sysbus_init_irq(sbd, &s->core_irq);
     sysbus_init_irq(sbd, &s->dma_irq);
+
+    qemu_mutex_init(&s->rdma_mutex);
+    qemu_mutex_init(&s->wdma_mutex);
 
     /* TODO: придумать как передавать аргументы для подключения */
     { /* FIXME: временное решение */
