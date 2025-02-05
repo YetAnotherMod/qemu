@@ -14,9 +14,15 @@ The simple steps to build QEMU for PowePC are:
 
 ## Launching
 
-MB115.01 and MT174.04 boards are available with PowerPC 476FP core.
+PowerPC 476FP SoC and board availability:
 
-To start MB115.01 you can use following command:
+|Board name|System on Chip used|Firmware name|
+|:------:|:------:|:------:|
+|mb115.01|1888TX018|module_mb115_rumboot.bin|
+|mt150.02|1888BM018|module_mt150_rumboot.bin|
+|mt174.04|1888BM028A|module_mt174_rumboot.bin|
+
+To start MB115.01 board you can use following command:
 
 ```bash
     sudo ./qemu-system-ppc \
@@ -29,16 +35,7 @@ To start MB115.01 you can use following command:
         -nic tap,model=greth,script=scripts/qemu-ifup,downscript=no
 ```
 
-To start MT174.04 you can use following command:
-
-```bash
-    sudo ./qemu-system-ppc \
-        -M mt174.04 \
-        -bios ../pc-bios/module_mt174_rumboot.bin \
-        -monitor tcp::2345,server,nowait \
-        -serial tcp::3555,server,nodelay,nowait \
-        -gdb tcp::1234,server,nowait
-```
+To start any other available board just replace `mb115.01` and `module_mb115_rumboot.bin` from the table above.
 
 If you want to launch qemu with SD card use additional argument:
 

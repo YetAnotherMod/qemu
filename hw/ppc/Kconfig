@@ -174,14 +174,26 @@ config MM7705
     select GRETH
     select KEYASIC_SD
 
-config MT174
+config OI10_O32T
     bool
     default y
     select PL011 # UART
     select PL061 # GPIO
     select GRETH
-    select PFLASH_CFI02
+    select KEYASIC_SD
     select RCM_SPACEWIRE if VIRTSW
     select GR1553B if VIRTMKO
     select COMMPORT
     select PLB6_DMA
+
+config MT174
+    bool
+    default y
+    select PFLASH_CFI02
+    select OI10_O32T
+
+config MT150
+    bool
+    default y
+    select PFLASH_CFI02
+    select OI10_O32T

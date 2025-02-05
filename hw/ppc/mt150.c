@@ -10,26 +10,26 @@
 #include "hw/sd/sd.h"
 #include "hw/ppc/rcm_oi10_o32t.h"
 
-#define TYPE_MT174_MACHINE MACHINE_TYPE_NAME("mt174.04")
-#define MT174_MACHINE(obj) \
-    OBJECT_CHECK(MT174MachineState, obj, TYPE_MT174_MACHINE)
+#define TYPE_MT150_MACHINE MACHINE_TYPE_NAME("mt150.02")
+#define MT150_MACHINE(obj) \
+    OBJECT_CHECK(MT150MachineState, obj, TYPE_MT150_MACHINE)
 
 typedef struct {
     /*< private >*/
     MachineState parent;
 
     /*< public >*/
-    O32TState *soc;
+    OI10State *soc;
 
     /* boot properties */
     uint8_t boot_cfg;
-} MT174MachineState;
+} MT150MachineState;
 
-static void mt174_init(MachineState *machine)
+static void mt150_init(MachineState *machine)
 {
-    MT174MachineState *s = MT174_MACHINE(machine);
+    MT150MachineState *s = MT150_MACHINE(machine);
 
-    s->soc = (O32TState *)qdev_new(TYPE_O32T);
+    s->soc = (OI10State *)qdev_new(TYPE_OI10);
     qdev_prop_set_uint8(DEVICE(s->soc), "boot-cfg", s->boot_cfg);
     qdev_prop_set_string(DEVICE(s->soc), "firmware", machine->firmware);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(s->soc), &error_fatal);
@@ -79,46 +79,46 @@ static void mt174_init(MachineState *machine)
     }
 }
 
-static void mt174_reset(MachineState *machine, ShutdownCause reason)
+static void mt150_reset(MachineState *machine, ShutdownCause reason)
 {
     // default action
     qemu_devices_reset(reason);
 }
 
-static void mt174_boot_cfg_get_and_set(Object *obj, Visitor *v,
+static void mt150_boot_cfg_get_and_set(Object *obj, Visitor *v,
                                        const char *name, void *opaque,
                                        Error **errp)
 {
-    MT174MachineState *s = MT174_MACHINE(obj);
+    MT150MachineState *s = MT150_MACHINE(obj);
 
     visit_type_uint8(v, name, &s->boot_cfg, errp);
 }
 
-static void mt174_class_init(ObjectClass *oc, void *data)
+static void mt150_class_init(ObjectClass *oc, void *data)
 {
     MachineClass *mc = MACHINE_CLASS(oc);
 
-    mc->desc = "MT174.04 board";
+    mc->desc = "MT150.02 board";
 
-    mc->init = mt174_init;
-    mc->reset = mt174_reset;
+    mc->init = mt150_init;
+    mc->reset = mt150_reset;
 
     ObjectProperty *prop = object_class_property_add(
-        oc, "boot-cfg", "uint8", mt174_boot_cfg_get_and_set,
-        mt174_boot_cfg_get_and_set, NULL, NULL);
+        oc, "boot-cfg", "uint8", mt150_boot_cfg_get_and_set,
+        mt150_boot_cfg_get_and_set, NULL, NULL);
     object_property_set_default_uint(prop, OI10_O32T_BOOT_CFG_DEFVAL);
 }
 
-static const TypeInfo mt174_info = {
-    .name = TYPE_MT174_MACHINE,
+static const TypeInfo mt150_info = {
+    .name = TYPE_MT150_MACHINE,
     .parent = TYPE_MACHINE,
-    .instance_size = sizeof(MT174MachineState),
-    .class_init = mt174_class_init,
+    .instance_size = sizeof(MT150MachineState),
+    .class_init = mt150_class_init,
 };
 
-static void mt174_machines_init(void)
+static void mt150_machines_init(void)
 {
-    type_register_static(&mt174_info);
+    type_register_static(&mt150_info);
 }
 
-type_init(mt174_machines_init)
+type_init(mt150_machines_init)

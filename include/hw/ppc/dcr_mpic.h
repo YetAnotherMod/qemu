@@ -1,6 +1,8 @@
 #ifndef DCR_MPIC_H
 #define DCR_MPIC_H
 
+#include "qemu/timer.h"
+
 #define MAX_CPU_SUPPORTED	4
 
 #define EXT_SOURCE_NUM		128
