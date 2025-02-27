@@ -75,8 +75,29 @@ qemu_mko_spacewire_deb11:
     - 'curl --output /artifacts.zip --header "JOB-TOKEN: $CI_JOB_TOKEN"
         "$CI_API_V4_URL/projects/276/jobs/artifacts/develop/download?job=debian11_64"'
     - unzip /artifacts.zip -d /
-    - dpkg -i /_packages/emuio-virtsw*.deb
-    - dpkg -i /_packages/emuio-virtmko*.deb
+    - dpkg -i /_packages/emuio_virtsw.deb
+    - dpkg -i /_packages/emuio_virtmko.deb
+
+    - *common_script_part
+  <<: *common_after_part
+
+qemu_astra1.7:
+  stage: build
+  image: git.module.ru:5050/p13/dockers/astralinux/astra-se1.7:base
+  before_script:
+    - apt update
+    # INFO: setup pip to work with local repositories
+    - echo "[global]" > /etc/pip.conf
+    - echo "index=https://lrepo.module.ru/repository/pypi/" >> /etc/pip.conf
+    - echo "index-url=https://lrepo.module.ru/repository/pypi/simple/" >> /etc/pip.conf
+    - echo "trusted-host=lrepo.module.ru" >> /etc/pip.conf
+  script:
+    - apt install -y git libglib2.0-dev libfdt-dev
+        libpixman-1-dev zlib1g-dev ninja-build python3-pip
+        curl unzip
+
+    # upgrade pip
+    - pip3 install --upgrade pip
 
     - *common_script_part
   <<: *common_after_part
