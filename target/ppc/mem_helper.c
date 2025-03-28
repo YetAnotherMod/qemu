@@ -81,6 +81,135 @@ static void *probe_contiguous(CPUPPCState *env, target_ulong addr, uint32_t nb,
     return NULL;
 }
 
+void helper_do_load(CPUPPCState *env, target_ulong addr, uint32_t reg, uint32_t memop)
+{
+    assert((memop & MO_SIZE) <= MO_32);
+    assert((memop & MO_AMASK) == 0);
+    assert((memop & MO_ATOM_MASK) == 0);
+
+    int mmu_idx = cpu_mmu_index(env, false);
+    uintptr_t raddr = GETPC();
+    void *host =
+        probe_contiguous(env, addr, memop_size(memop), MMU_DATA_LOAD, mmu_idx, raddr);
+
+    int flags = probe_access_full_mmu(env, addr, 0, MMU_DATA_LOAD, mmu_idx, NULL, NULL);
+    assert(flags != TLB_INVALID_MASK);
+
+    if (flags & TLB_BSWAP) {
+        memop ^= MO_BSWAP;
+    }
+
+    int (*ld_fun)(const void *);
+    uint32_t (*ld_mmuidx_fun)(CPUArchState *, abi_ptr, int, uintptr_t);
+
+    switch (memop & MO_SSIZE) {
+    case MO_UB:
+        ld_fun = ldub_p;
+        ld_mmuidx_fun = cpu_ldub_mmuidx_ra;
+        break;
+
+    case MO_SB:
+        ld_fun = ldsb_p;
+        ld_mmuidx_fun = (typeof(ld_mmuidx_fun))cpu_ldsb_mmuidx_ra;
+        break;
+
+    case MO_UW:
+        if (memop & MO_BSWAP) {
+            ld_fun = lduw_be_p;
+        } else {
+            ld_fun = lduw_le_p;
+        }
+        ld_mmuidx_fun = cpu_lduw_mmuidx_ra;
+        break;
+
+    case MO_SW:
+        if (memop & MO_BSWAP) {
+            ld_fun = ldsw_be_p;
+        } else {
+            ld_fun = ldsw_le_p;
+        }
+        ld_mmuidx_fun = (typeof(ld_mmuidx_fun))cpu_ldsw_mmuidx_ra;
+        break;
+
+    case MO_UL:
+    case MO_SL:
+        if (memop & MO_BSWAP) {
+            ld_fun = ldl_be_p;
+        } else {
+            ld_fun = ldl_le_p;
+        }
+        ld_mmuidx_fun = cpu_ldl_be_mmuidx_ra;
+        break;
+
+    default:
+        g_assert_not_reached();
+    }
+
+    if (likely(host)) {
+        env->gpr[reg] = (uint32_t)ld_fun(host);
+    } else {
+        env->gpr[reg] = ld_mmuidx_fun(env, addr, mmu_idx, raddr);
+    }
+}
+
+void helper_do_store(CPUPPCState *env, target_ulong addr, uint32_t reg, uint32_t memop)
+{
+    assert((memop & MO_SIZE) <= MO_32);
+    assert((memop & MO_AMASK) == 0);
+    assert((memop & MO_ATOM_MASK) == 0);
+
+    int mmu_idx = cpu_mmu_index(env, false);
+    uintptr_t raddr = GETPC();
+    void *host =
+        probe_contiguous(env, addr, memop_size(memop), MMU_DATA_STORE, mmu_idx, raddr);
+
+    int flags = probe_access_full_mmu(env, addr, 0, MMU_DATA_STORE, mmu_idx, NULL, NULL);
+    assert(flags != TLB_INVALID_MASK);
+
+    if (flags & TLB_BSWAP) {
+        memop ^= MO_BSWAP;
+    }
+
+    void (*st_fun)(void *ptr, uint32_t v);
+    void (*st_data_fun)(CPUArchState *, abi_ptr, uint32_t, uintptr_t);
+
+    switch (memop & MO_SIZE) {
+    case MO_8:
+        st_fun = (typeof(st_fun))stb_p;
+        st_data_fun = cpu_stb_data_ra;
+        break;
+
+    case MO_16:
+        if (memop & MO_BSWAP) {
+            st_fun = (typeof(st_fun))stw_be_p;
+            st_data_fun = cpu_stw_be_data_ra;
+        } else {
+            st_fun = (typeof(st_fun))stw_le_p;
+            st_data_fun = cpu_stw_le_data_ra;
+        }
+        break;
+
+    case MO_32:
+        if (memop & MO_BSWAP) {
+            st_fun = stl_be_p;
+            st_data_fun = cpu_stl_be_data_ra;
+        } else {
+            st_fun = stl_le_p;
+            st_data_fun = cpu_stl_le_data_ra;
+        }
+        break;
+
+    default:
+        g_assert_not_reached();
+    }
+
+    if (likely(host)) {
+        st_fun(host, env->gpr[reg]);
+    } else {
+        st_data_fun(env, addr, env->gpr[reg], raddr);
+    }
+}
+
 void helper_lmw(CPUPPCState *env, target_ulong addr, uint32_t reg)
 {
     uintptr_t raddr = GETPC();

@@ -37,6 +37,9 @@ DEF_HELPER_1(check_tlb_flush_global, void, env)
 DEF_HELPER_1(476_shadow_tlb_flush, void, env)
 #endif
 
+DEF_HELPER_4(do_load, void, env, tl, i32, i32)
+DEF_HELPER_4(do_store, void, env, tl, i32, i32)
+
 DEF_HELPER_3(lmw, void, env, tl, i32)
 DEF_HELPER_FLAGS_3(stmw, TCG_CALL_NO_WG, void, env, tl, i32)
 DEF_HELPER_4(lsw, void, env, tl, i32, i32)
