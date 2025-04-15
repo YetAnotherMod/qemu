@@ -243,6 +243,8 @@ typedef enum powerpc_mmu_t {
     POWERPC_MMU_BOOKE      = 0x00000008,
     /* BookE 2.06 MMU model                                    */
     POWERPC_MMU_BOOKE206   = 0x00000009,
+    /* PowerPC 476FP MMU model                                 */
+    POWERPC_MMU_476FP      = 0x0000000A,
 #define POWERPC_MMU_64       0x00010000
     /* 64 bits PowerPC MMU                                     */
     POWERPC_MMU_64B        = POWERPC_MMU_64 | 0x00000001,

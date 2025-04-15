@@ -614,7 +614,7 @@ static void mm7705_init(MachineState *machine)
         /* set ip 192.168.1.2 as one number */
         qdev_prop_set_uint32(DEVICE(&s->greth[0]), "edcl_ip", 0xc0a80102);
         sysbus_realize(SYS_BUS_DEVICE(&s->greth[0]), &error_fatal);
-        SysBusDevice *busdev = SYS_BUS_DEVICE(&s->greth[0]);
+        busdev = SYS_BUS_DEVICE(&s->greth[0]);
         memory_region_add_subregion(get_system_memory(), 0x103c035000,
                                     sysbus_mmio_get_region(busdev, 0));
 
@@ -699,7 +699,7 @@ static void mm7705_init(MachineState *machine)
         object_initialize_child(OBJECT(s), "sdio", &s->sdio, TYPE_KEYASIC_SD);
         keyasic_sd_change_address_space(&s->sdio, axi_addr_space, &error_fatal);
         sysbus_realize(SYS_BUS_DEVICE(&s->sdio), &error_fatal);
-        SysBusDevice *busdev = SYS_BUS_DEVICE(&s->sdio);
+        busdev = SYS_BUS_DEVICE(&s->sdio);
         memory_region_add_subregion(get_system_memory(), 0x103c064000,
                                     sysbus_mmio_get_region(busdev, 0));
         sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 67));

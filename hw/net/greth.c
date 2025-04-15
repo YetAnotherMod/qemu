@@ -883,8 +883,8 @@ static void greth_realize(DeviceState *dev, Error **errp)
     sysbus_init_irq(sbd, &s->irq);
 
     qemu_macaddr_default_if_unset(&s->conf.macaddr);
-    s->nic = qemu_new_nic(&net_greth_info, &s->conf,
-                            object_get_typename(OBJECT(dev)), dev->id, s);
+    s->nic = qemu_new_nic(&net_greth_info, &s->conf, object_get_typename(OBJECT(dev)),
+                          dev->id, &dev->mem_reentrancy_guard, s);
     qemu_format_nic_info_str(qemu_get_queue(s->nic), s->conf.macaddr.a);
     // set default address space
     if (s->addr_space == NULL) {

@@ -7854,7 +7854,7 @@ void ppc_cpu_dump_state(CPUState *cs, FILE *f, int flags)
 
     int k = 0;
     while (k < 1024) {
-        int i = k;
+        i = k;
         int count = 0;
 
         while (count != 4 && i < 1024) {
