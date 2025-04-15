@@ -10,6 +10,9 @@ struct GR1553BState {
     /*< private >*/
     SysBusDevice parent;
 
+    /* Address space for internal DMA that can be changed during board init */
+    AddressSpace *addr_space;
+
     /*< public >*/
     MemoryRegion iomem;
 
@@ -44,5 +47,8 @@ typedef struct GR1553BState GR1553BState;
 
 #define TYPE_GR1553B "gr1553b"
 #define GR1553B(obj) OBJECT_CHECK(GR1553BState, (obj), TYPE_GR1553B)
+
+void gr1553b_change_address_space(GR1553BState *s, AddressSpace *addr_space,
+                                  Error **errp);
 
 #endif

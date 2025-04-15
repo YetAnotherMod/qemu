@@ -270,7 +270,7 @@ static void dcr_unknown64k(CPUPPCState *env, uint32_t base)
 }
 
 #ifdef CONFIG_VIRTMKO
-static void add_mko_controllers(Oi10O32tState *s, int count)
+static void add_mko_controllers(Oi10O32tState *s, AddressSpace *addr_space, int count)
 {
     hwaddr addr[MKO_COUNT_MAX] = {0x20c0020000u, 0x20c0030000u, 0x20c0021000u,
                                   0x20c0031000u};
@@ -280,6 +280,7 @@ static void add_mko_controllers(Oi10O32tState *s, int count)
     for (uint32_t i = 0; i < count; i++) {
         snprintf(name, sizeof(name), "mko[%u]", i);
         object_initialize_child(OBJECT(s), name, &s->mko[i], TYPE_GR1553B);
+        gr1553b_change_address_space(&s->mko[i], addr_space, &error_fatal);
         sysbus_realize(SYS_BUS_DEVICE(&s->mko[i]), &error_fatal);
         SysBusDevice *busdev = SYS_BUS_DEVICE(&s->mko[i]);
         memory_region_add_subregion(get_system_memory(), addr[i],
@@ -289,11 +290,13 @@ static void add_mko_controllers(Oi10O32tState *s, int count)
     }
 }
 #else
-static void add_mko_controllers(Oi10O32tState *s, int count)
+static void add_mko_controllers(Oi10O32tState *s, AddressSpace *addr_space, int count)
 {
     hwaddr addr[MKO_COUNT_MAX] = {0x20c0020000u, 0x20c0030000u, 0x20c0021000u,
                                   0x20c0031000u};
     char name[8];
+
+    (void)addr_space; /* unused */
 
     for (uint32_t i = 0; i < count; i++) {
         snprintf(name, sizeof(name), "mko[%u]", i);
@@ -532,7 +535,8 @@ static void oi10_o32t_realize(DeviceState *dev, Error **errp)
     memory_region_init_alias(IM1_on_AXI, NULL, "IM1_on_AXI", IM1, 0, 128 * KiB);
     memory_region_add_subregion(axi_mem, 0xc0000000, IM1_on_AXI);
 
-    add_mko_controllers(s, class->is_o32t ? MKO_COUNT_O32T : MKO_COUNT_OI10);
+    add_mko_controllers(s, axi_addr_space,
+                        class->is_o32t ? MKO_COUNT_O32T : MKO_COUNT_OI10);
 
     s->gpio[0] = sysbus_create_simple("pl061", 0x20c0028000,
                                       qdev_get_gpio_in(DEVICE(&s->mpic), 32));

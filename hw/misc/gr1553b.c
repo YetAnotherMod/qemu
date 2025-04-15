@@ -5,6 +5,7 @@
 
 #include "qemu/osdep.h"
 #include "qemu/atomic.h"
+#include "qapi/error.h"
 #include "hw/irq.h"
 
 #include "exec/address-spaces.h"
@@ -374,7 +375,7 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
     uint32_t size = (msg.nwords ? msg.nwords : MKO_MAX_WORDS) * sizeof(uint16_t);
     switch (msg.format) {
     case 1:
-        if (dma_memory_read(&address_space_memory, desc->addr, msg.data, size,
+        if (dma_memory_read(s->addr_space, desc->addr, msg.data, size,
                             MEMTXATTRS_UNSPECIFIED)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
@@ -395,8 +396,8 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
             break;
         }
 
-        if (dma_memory_write(&address_space_memory, desc->addr, s->resp.data, size,
-                                 MEMTXATTRS_UNSPECIFIED)) {
+        if (dma_memory_write(s->addr_space, desc->addr, s->resp.data, size,
+                             MEMTXATTRS_UNSPECIFIED)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
@@ -524,7 +525,7 @@ static void *gr1553b_bc_thread(void *opaque)
         while (executing) {
             uint32_t curr_addr = s->reg_bc_trans;
 
-            if (read_bc_trans_desc(&address_space_memory, curr_addr, &bc_desc)) {
+            if (read_bc_trans_desc(s->addr_space, curr_addr, &bc_desc)) {
                 /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
                 g_assert_not_reached();
             }
@@ -535,7 +536,7 @@ static void *gr1553b_bc_thread(void *opaque)
             } else {
                 exec_msg_desc(s, &bc_desc);
                 prev_res.val = bc_desc.result.val;
-                if (write_bc_trans_desc(&address_space_memory, curr_addr, &bc_desc)) {
+                if (write_bc_trans_desc(s->addr_space, curr_addr, &bc_desc)) {
                     /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
                     g_assert_not_reached();
                 }
@@ -583,7 +584,7 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
     uint32_t entry_addr =
         s->reg_rt_subaddr_base_addr + msg->subaddr * sizeof(rt_subaddr_entry_t);
 
-    if (read_rt_subaddr_entry(&address_space_memory, entry_addr, &entry)) {
+    if (read_rt_subaddr_entry(s->addr_space, entry_addr, &entry)) {
         /* FIXME: generate irq and then what?*/
         g_assert_not_reached();
     }
@@ -621,7 +622,7 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
     }
 
     rt_desc_t desc;
-    if (read_rt_desc(&address_space_memory, desc_addr, &desc)) {
+    if (read_rt_desc(s->addr_space, desc_addr, &desc)) {
         /* FIXME: generate irq and then what?*/
         g_assert_not_reached();
     }
@@ -636,14 +637,14 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
         }
 
         /* write data */
-        if (dma_memory_write(&address_space_memory, desc.data_addr, msg->data, size,
+        if (dma_memory_write(s->addr_space, desc.data_addr, msg->data, size,
                              MEMTXATTRS_UNSPECIFIED)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
 
         /* update subaddress entry pointer */
-        if (write_rt_u32(&address_space_memory,
+        if (write_rt_u32(s->addr_space,
                          entry_addr + offsetof(rt_subaddr_entry_t, rx_addr),
                          desc.next_desc)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
@@ -654,7 +655,7 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
         desc.word.sz = msg->nwords;
         desc.word.dv = 1;
 
-        if (write_rt_u32(&address_space_memory, desc_addr, desc.word.val)) {
+        if (write_rt_u32(s->addr_space, desc_addr, desc.word.val)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
@@ -662,14 +663,14 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
 
     case 2:
         /* read data */
-        if (dma_memory_read(&address_space_memory, desc.data_addr, msg->data, size,
+        if (dma_memory_read(s->addr_space, desc.data_addr, msg->data, size,
                             MEMTXATTRS_UNSPECIFIED)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
 
         /* update subaddress entry pointer */
-        if (write_rt_u32(&address_space_memory,
+        if (write_rt_u32(s->addr_space,
                          entry_addr + offsetof(rt_subaddr_entry_t, tx_addr),
                          desc.next_desc)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
@@ -680,7 +681,7 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
         desc.word.sz = msg->nwords;
         desc.word.dv = 1;
 
-        if (write_rt_u32(&address_space_memory, desc_addr, desc.word.val)) {
+        if (write_rt_u32(s->addr_space, desc_addr, desc.word.val)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
@@ -989,6 +990,21 @@ static void gr1553b_realize(DeviceState *dev, Error **errp)
     qemu_mutex_lock(&s->bc_mutex);
     qemu_thread_create(&s->bc_thread, "gr1553b_bc_thread", gr1553b_bc_thread, s,
                        QEMU_THREAD_JOINABLE);
+
+    // set default address space
+    if (s->addr_space == NULL) {
+        s->addr_space = &address_space_memory;
+    }
+}
+
+void gr1553b_change_address_space(GR1553BState *s, AddressSpace *addr_space,
+                                  Error **errp)
+{
+    if (object_property_get_bool(OBJECT(s), "realized", errp)) {
+        error_setg(errp, "Can't change address_space of realized device\n");
+    }
+
+    s->addr_space = addr_space;
 }
 
 static void gr1553b_class_init(ObjectClass *klass, void *data)
