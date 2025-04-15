@@ -11,6 +11,9 @@ config OPENGL
 config X11
     bool
 
+config PIXMAN
+    bool
+
 config SPICE
     bool
 
@@ -51,4 +54,7 @@ config VIRTSW
     bool
 
 config VIRTMKO
+    bool
+
+config HV_BALLOON_POSSIBLE
     bool

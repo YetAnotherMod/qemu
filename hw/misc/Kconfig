@@ -34,6 +34,11 @@ config PCA9552
     bool
     depends on I2C
 
+config I2C_ECHO
+    bool
+    default y if TEST_DEVICES
+    depends on I2C
+
 config PL310
     bool
 
@@ -189,6 +194,15 @@ config AXP2XX_PMU
 config RCM_SPACEWIRE
     bool
     depends on VIRTSW
+
+config DJMEMC
+    bool
+
+config IOSB
+    bool
+
+config XLNX_VERSAL_TRNG
+    bool
 
 source macio/Kconfig
 
