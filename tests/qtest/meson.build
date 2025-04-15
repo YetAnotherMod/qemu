@@ -1,5 +1,6 @@
 slow_qtests = {
   'ahci-test' : 60,
+  'aspeed_smc-test': 360,
   'bios-tables-test' : 120,
   'boot-serial-test' : 60,
   'migration-test' : 150,
@@ -332,7 +333,7 @@ if vnc.found()
 endif
 
 if dbus_display
-  qtests += {'dbus-display-test': [dbus_display1, gio]}
+  qtests += {'dbus-display-test': [dbus_display1_dep, gio]}
 endif
 
 qtest_executables = {}
