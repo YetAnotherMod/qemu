@@ -92,12 +92,12 @@ qemu_astra1.7:
     - echo "index-url=https://lrepo.module.ru/repository/pypi/simple/" >> /etc/pip.conf
     - echo "trusted-host=lrepo.module.ru" >> /etc/pip.conf
   script:
-    - apt install -y git libglib2.0-dev libfdt-dev
-        libpixman-1-dev zlib1g-dev ninja-build python3-pip
+    - apt install -y git libglib2.0-dev libfdt-dev build-essential
+        libpixman-1-dev zlib1g-dev ninja-build python3.11*
         curl unzip
 
-    # upgrade pip
-    - pip3 install --upgrade pip
+    # install pip
+    - python3.11 -m ensurepip --upgrade
 
     - *common_script_part
   <<: *common_after_part
