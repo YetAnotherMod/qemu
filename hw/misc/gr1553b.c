@@ -87,6 +87,11 @@
 
 #define MKO_MAX_WORDS 32
 
+#define BC_DESC_RETMD_SAME_BUS 0b00
+#define BC_DESC_RETMD_SWAP_EVERY_RETRY 0b01
+#define BC_DESC_RETMD_SAME_THEN_ANOTHER 0b10
+#define BC_DESC_RETMD_RESERVED 0b11
+
 /*
  * common DMA logic
  */
@@ -369,8 +374,6 @@ static bool bc_virtmko_recv_wait(GR1553BState *s)
 
 static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
 {
-    desc->result.val = 0;
-
     vmko_msg msg;
     msg.nwords = desc->word1.wcmc;
     msg.subaddr = desc->word1.rtsa1;
@@ -433,19 +436,63 @@ static void bc_write_to_irq_ring(GR1553BState *s, uint32_t addr)
     qemu_mutex_unlock(&s->internal_mutex);
 }
 
+static bool swap_bus_on_retry(uint32_t retmd, uint32_t nret, uint32_t retry_num)
+{
+    switch (retmd) {
+    case BC_DESC_RETMD_SAME_BUS:
+        return false;
+
+    case BC_DESC_RETMD_SWAP_EVERY_RETRY:
+        return true;
+
+    case BC_DESC_RETMD_SAME_THEN_ANOTHER:
+        if (retry_num == nret) {
+            return true;
+        }
+        return false;
+
+    default:
+        g_assert_not_reached();
+    }
+}
+
 static void exec_msg_desc(GR1553BState *s, uint32_t curr_addr, bc_trans_desc_t *desc)
 {
+    assert(desc->word0.retmd != BC_DESC_RETMD_RESERVED);
     /* this bits are not supported yet */
     assert(desc->word0.wtrig == 0);
-    assert(desc->word0.retmd == 0);
-    assert(desc->word0.nret == 0);
     assert(desc->word0.stbus == 0);
     assert(desc->word0.gap == 0);
 
+    /* first try */
+    desc->result.val = 0;
     if (desc->word1.dummy) {
-        desc->result.val = 0;
         desc->result.tfrst = BC_TFRST_SUCCESS;
     } else {
+        bc_send_msg(s, desc);
+    }
+
+    /* retry if failed and set to
+     * retry count is calculated as (nret + 1) for same bus
+     * and (nret + 1)*2 for any swap
+     * first try we do separately, that's why no `+1` for same bus
+     * but we need `+1` for any swap
+     */
+    uint32_t retry_num = desc->word0.retmd == BC_DESC_RETMD_SAME_BUS
+                             ? desc->word0.nret
+                             : desc->word0.nret + desc->word0.nret + 1;
+    while (desc->result.tfrst != BC_TFRST_SUCCESS && retry_num--) {
+        /* dummy transfer cannot fail */
+        assert(desc->word1.dummy == 0);
+
+        desc->result.retcnt++;
+
+        /* `+1` here to properly calculate half */
+        if (swap_bus_on_retry(desc->word0.retmd, desc->word0.nret + 1,
+                              desc->result.retcnt)) {
+            desc->word1.bus = !desc->word1.bus;
+        }
+
         bc_send_msg(s, desc);
     }
 
