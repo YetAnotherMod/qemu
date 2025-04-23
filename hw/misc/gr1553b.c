@@ -1072,16 +1072,6 @@ static void vmko_recv_hndl(vmko_controller *ctr, vmko_msg *msg)
     }
 }
 
-static void vmko_timeout_hndl(vmko_controller *ctr)
-{
-    /* FIXME: timeout can be triggered too early
-     * this can happen coz timeouts are not related with vmko_send function
-     * and it can trigger right after BC sended and waits for response
-     * so it receives NULL instead of normal response
-     */
-    vmko_recv_hndl(ctr, NULL);
-}
-
 /*
  * device code
  */
@@ -1111,7 +1101,6 @@ static void gr1553b_realize(DeviceState *dev, Error **errp)
         vmko_set_ip_port(s->vmko_ctrl, ip_port);
     }
     vmko_set_handler(s->vmko_ctrl, vmko_recv_hndl);
-    vmko_set_timeout_handler(s->vmko_ctrl, vmko_timeout_hndl);
     vmko_set_private_data(s->vmko_ctrl, s);
     vmko_start_threaded(s->vmko_ctrl);
 
