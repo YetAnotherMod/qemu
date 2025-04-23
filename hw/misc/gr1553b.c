@@ -1012,8 +1012,13 @@ static void gr1553b_realize(DeviceState *dev, Error **errp)
     /* virtmko */
     s->vmko_ctrl = vmko_new();
     /* TODO: придумать как передавать аргументы для подключения */
-    vmko_set_ip_port(s->vmko_ctrl, "224.5.0.141:3800");
-    vmko_set_timeout(s->vmko_ctrl, 1);
+    { /* FIXME: временное решение */
+        static int port = 3800;
+        char ip_port[32];
+        snprintf(ip_port, sizeof(ip_port), "224.5.0.141:%u", port++);
+        printf("mko[%u] ip:port are %s\n", port - 3801, ip_port);
+        vmko_set_ip_port(s->vmko_ctrl, ip_port);
+    }
     vmko_set_handler(s->vmko_ctrl, vmko_recv_hndl);
     vmko_set_timeout_handler(s->vmko_ctrl, vmko_timeout_hndl);
     vmko_set_private_data(s->vmko_ctrl, s);
