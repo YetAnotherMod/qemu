@@ -59,6 +59,9 @@
 #define BC_ACT_SCHED_SUSPEND (1 << 1)
 #define BC_ACT_SCHED_START (1 << 0)
 
+#define BC_TT_IRQ_RING_POS_BASE_MASK 0xffffffc0
+#define BC_TT_IRQ_RING_POS_OFFSET_MASK 0x3c
+
 #define RT_STATUS_RTSUP (1 << 31)
 #define RT_STATUS_ACT (1 << 3)
 #define RT_STATUS_SHDA (1 << 2)
@@ -411,7 +414,26 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
     }
 }
 
-static void exec_msg_desc(GR1553BState *s, bc_trans_desc_t *desc)
+static void bc_write_to_irq_ring(GR1553BState *s, uint32_t addr)
+{
+    qemu_mutex_lock(&s->internal_mutex);
+
+    if (write_u32(s->addr_space, s->reg_bc_tt_irq_ring_pos + s->bc_tt_irq_ring_offset,
+                  addr)) {
+        /* FIXME: generate error? */
+        g_assert_not_reached();
+    }
+
+    /* advance pointer to next 32-bit word
+     * wrap ring-buffer at 64-byte boundary
+     */
+    s->bc_tt_irq_ring_offset += sizeof(uint32_t);
+    s->bc_tt_irq_ring_offset &= BC_TT_IRQ_RING_POS_OFFSET_MASK;
+
+    qemu_mutex_unlock(&s->internal_mutex);
+}
+
+static void exec_msg_desc(GR1553BState *s, uint32_t curr_addr, bc_trans_desc_t *desc)
 {
     /* this bits are not supported yet */
     assert(desc->word0.wtrig == 0);
@@ -430,6 +452,7 @@ static void exec_msg_desc(GR1553BState *s, bc_trans_desc_t *desc)
     if (desc->result.tfrst) {
         if (desc->word0.irqe) {
             qatomic_or(&s->reg_irq, IRQ_BCEV);
+            bc_write_to_irq_ring(s, curr_addr);
             qemu_mutex_lock_iothread();
             gr1553b_update_irq(s);
             qemu_mutex_unlock_iothread();
@@ -443,6 +466,7 @@ static void exec_msg_desc(GR1553BState *s, bc_trans_desc_t *desc)
     } else {
         if (desc->word0.irqn) {
             qatomic_or(&s->reg_irq, IRQ_BCEV);
+            bc_write_to_irq_ring(s, curr_addr);
             qemu_mutex_lock_iothread();
             gr1553b_update_irq(s);
             qemu_mutex_unlock_iothread();
@@ -537,7 +561,7 @@ static void *gr1553b_bc_thread(void *opaque)
             if (bc_desc.is_branch_desc) {
                 next_addr = exec_branch_desc(s, &bc_desc, curr_addr, prev_res);
             } else {
-                exec_msg_desc(s, &bc_desc);
+                exec_msg_desc(s, curr_addr, &bc_desc);
                 prev_res.val = bc_desc.result.val;
                 if (write_bc_trans_desc(s->addr_space, curr_addr, &bc_desc)) {
                     /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
@@ -766,7 +790,9 @@ static uint64_t gr1553b_read(void *opaque, hwaddr offset, unsigned size)
         break;
 
     case REG_BC_IRQ_RING_POS:
-        g_assert_not_reached();
+        qemu_mutex_lock(&s->internal_mutex);
+        val = s->reg_bc_tt_irq_ring_pos + s->bc_tt_irq_ring_offset;
+        qemu_mutex_unlock(&s->internal_mutex);
         break;
 
     case REG_BC_BUS_SWAP:
@@ -855,7 +881,10 @@ static void gr1553b_write(void *opaque, hwaddr offset, uint64_t val, unsigned si
         break;
 
     case REG_BC_IRQ_RING_POS:
-        g_assert_not_reached();
+        qemu_mutex_lock(&s->internal_mutex);
+        s->reg_bc_tt_irq_ring_pos = val & BC_TT_IRQ_RING_POS_BASE_MASK;
+        s->bc_tt_irq_ring_offset = val & BC_TT_IRQ_RING_POS_OFFSET_MASK;
+        qemu_mutex_unlock(&s->internal_mutex);
         break;
 
     case REG_BC_BUS_SWAP:
@@ -907,6 +936,8 @@ static void gr1553b_reset(DeviceState *dev)
 
     s->reg_bc_trans = 0;
     s->bc_scst = BC_SCHED_STOPPED;
+    s->reg_bc_tt_irq_ring_pos = 0;
+    s->bc_tt_irq_ring_offset = 0;
     s->internal_signal = INTERNAL_SIGNAL_NONE;
 
     s->rt_addr = RT_RESET_ADDR;
