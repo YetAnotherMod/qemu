@@ -85,6 +85,19 @@
 #define MKO_MAX_WORDS 32
 
 /*
+ * common DMA logic
+ */
+static int write_u32(AddressSpace *as, dma_addr_t addr, uint32_t data)
+{
+    data = be32_to_cpu(data);
+
+    if (dma_memory_write(as, addr, &data, sizeof(uint32_t), MEMTXATTRS_UNSPECIFIED)) {
+        return -1;
+    }
+    return 0;
+}
+
+/*
  * DMA logic for BC
  */
 typedef union {
@@ -257,16 +270,6 @@ static int read_rt_desc(AddressSpace *as, dma_addr_t addr, rt_desc_t *desc)
     desc->word.val = cpu_to_be32(desc->word.val);
     desc->data_addr = cpu_to_be32(desc->data_addr);
     desc->next_desc = cpu_to_be32(desc->next_desc);
-    return 0;
-}
-
-static int write_rt_u32(AddressSpace *as, dma_addr_t addr, uint32_t data)
-{
-    data = be32_to_cpu(data);
-
-    if (dma_memory_write(as, addr, &data, sizeof(uint32_t), MEMTXATTRS_UNSPECIFIED)) {
-        return -1;
-    }
     return 0;
 }
 
@@ -644,9 +647,8 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
         }
 
         /* update subaddress entry pointer */
-        if (write_rt_u32(s->addr_space,
-                         entry_addr + offsetof(rt_subaddr_entry_t, rx_addr),
-                         desc.next_desc)) {
+        if (write_u32(s->addr_space, entry_addr + offsetof(rt_subaddr_entry_t, rx_addr),
+                      desc.next_desc)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
@@ -655,7 +657,7 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
         desc.word.sz = msg->nwords;
         desc.word.dv = 1;
 
-        if (write_rt_u32(s->addr_space, desc_addr, desc.word.val)) {
+        if (write_u32(s->addr_space, desc_addr, desc.word.val)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
@@ -670,9 +672,8 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
         }
 
         /* update subaddress entry pointer */
-        if (write_rt_u32(s->addr_space,
-                         entry_addr + offsetof(rt_subaddr_entry_t, tx_addr),
-                         desc.next_desc)) {
+        if (write_u32(s->addr_space, entry_addr + offsetof(rt_subaddr_entry_t, tx_addr),
+                      desc.next_desc)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
@@ -681,7 +682,7 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
         desc.word.sz = msg->nwords;
         desc.word.dv = 1;
 
-        if (write_rt_u32(s->addr_space, desc_addr, desc.word.val)) {
+        if (write_u32(s->addr_space, desc_addr, desc.word.val)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
