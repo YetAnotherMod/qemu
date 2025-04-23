@@ -23,6 +23,7 @@ struct GR1553BState {
 
     uint32_t reg_bc_trans;
     uint32_t reg_bc_tt_irq_ring_pos; /* access locked by `internal_mutex` */
+    uint32_t reg_bc_async_list_next_ptr;
 
     uint32_t reg_rt_bus_status;
     uint32_t reg_rt_subaddr_base_addr;

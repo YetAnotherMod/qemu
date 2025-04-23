@@ -718,8 +718,7 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
 
 static void bc_action_write(GR1553BState *s, uint32_t val)
 {
-    if (val & (BC_ACT_ASYNC_STOP | BC_ACT_ASYNC_START | BC_ACT_EXT_TRIG_CLEAR |
-        BC_ACT_EXT_TRIG_SET)) {
+    if (val & (BC_ACT_ASYNC_START | BC_ACT_EXT_TRIG_CLEAR | BC_ACT_EXT_TRIG_SET)) {
         g_assert_not_reached();
     }
 
@@ -778,7 +777,7 @@ static uint64_t gr1553b_read(void *opaque, hwaddr offset, unsigned size)
         break;
 
     case REG_BC_ASYNC_LIST_PTR:
-        g_assert_not_reached();
+        val = s->reg_bc_async_list_next_ptr;
         break;
 
     case REG_BC_TIMER:
@@ -873,7 +872,7 @@ static void gr1553b_write(void *opaque, hwaddr offset, uint64_t val, unsigned si
         break;
 
     case REG_BC_ASYNC_LIST_PTR:
-        g_assert_not_reached();
+        s->reg_bc_async_list_next_ptr = val;
         break;
 
     case REG_BC_TIMER_WAKE_UP:
@@ -938,6 +937,7 @@ static void gr1553b_reset(DeviceState *dev)
     s->bc_scst = BC_SCHED_STOPPED;
     s->reg_bc_tt_irq_ring_pos = 0;
     s->bc_tt_irq_ring_offset = 0;
+    s->reg_bc_async_list_next_ptr = 0;
     s->internal_signal = INTERNAL_SIGNAL_NONE;
 
     s->rt_addr = RT_RESET_ADDR;
