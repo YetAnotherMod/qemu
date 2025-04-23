@@ -1006,6 +1006,8 @@ static void gr1553b_realize(DeviceState *dev, Error **errp)
     /* internal */
     qemu_mutex_init(&s->internal_mutex);
     qemu_mutex_init(&s->bc_recv_wait);
+    /* initial state should be locked */
+    qemu_mutex_lock(&s->bc_recv_wait);
 
     /* virtmko */
     s->vmko_ctrl = vmko_new();
