@@ -115,29 +115,32 @@ void helper_do_load(CPUPPCState *env, target_ulong addr, uint32_t reg, uint32_t 
     case MO_UW:
         if (memop & MO_BSWAP) {
             ld_fun = lduw_be_p;
+            ld_mmuidx_fun = cpu_lduw_be_mmuidx_ra;
         } else {
             ld_fun = lduw_le_p;
+            ld_mmuidx_fun = cpu_lduw_le_mmuidx_ra;
         }
-        ld_mmuidx_fun = cpu_lduw_mmuidx_ra;
         break;
 
     case MO_SW:
         if (memop & MO_BSWAP) {
             ld_fun = ldsw_be_p;
+            ld_mmuidx_fun = (typeof(ld_mmuidx_fun))cpu_ldsw_be_mmuidx_ra;
         } else {
             ld_fun = ldsw_le_p;
+            ld_mmuidx_fun = (typeof(ld_mmuidx_fun))cpu_ldsw_le_mmuidx_ra;
         }
-        ld_mmuidx_fun = (typeof(ld_mmuidx_fun))cpu_ldsw_mmuidx_ra;
         break;
 
     case MO_UL:
     case MO_SL:
         if (memop & MO_BSWAP) {
             ld_fun = ldl_be_p;
+            ld_mmuidx_fun = cpu_ldl_be_mmuidx_ra;
         } else {
             ld_fun = ldl_le_p;
+            ld_mmuidx_fun = cpu_ldl_le_mmuidx_ra;
         }
-        ld_mmuidx_fun = cpu_ldl_be_mmuidx_ra;
         break;
 
     default:
