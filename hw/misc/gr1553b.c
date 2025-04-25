@@ -105,6 +105,26 @@ static int write_u32(AddressSpace *as, dma_addr_t addr, uint32_t data)
     return 0;
 }
 
+static int copy_half_words(AddressSpace *as, dma_addr_t addr, uint16_t *data,
+                           uint32_t words, DMADirection direction)
+{
+    dma_addr_t len = words * sizeof(uint16_t);
+    uint16_t *mem = dma_memory_map(as, addr, &len, direction, MEMTXATTRS_UNSPECIFIED);
+    if (mem == NULL || len != words * sizeof(uint16_t)) {
+        return -1;
+    }
+
+    uint16_t *src = (direction == DMA_DIRECTION_TO_DEVICE) ? data : mem;
+    uint16_t *dst = (direction == DMA_DIRECTION_TO_DEVICE) ? mem : data;
+
+    for (uint32_t i = 0; i < words; i++) {
+        *dst++ = bswap16(*src++);
+    }
+
+    dma_memory_unmap(as, mem, len, direction, len);
+    return 0;
+}
+
 /*
  * DMA logic for BC
  */
@@ -381,11 +401,11 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
     msg.addr = desc->word1.rtad1;
     msg.format = get_format(desc->word1);
 
-    uint32_t size = (msg.nwords ? msg.nwords : MKO_MAX_WORDS) * sizeof(uint16_t);
+    uint32_t nwords = msg.nwords ? msg.nwords : MKO_MAX_WORDS;
     switch (msg.format) {
     case 1:
-        if (dma_memory_read(s->addr_space, desc->addr, msg.data, size,
-                            MEMTXATTRS_UNSPECIFIED)) {
+        if (copy_half_words(s->addr_space, desc->addr, msg.data, nwords,
+                            DMA_DIRECTION_FROM_DEVICE)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
@@ -405,8 +425,8 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
             break;
         }
 
-        if (dma_memory_write(s->addr_space, desc->addr, s->resp.data, size,
-                             MEMTXATTRS_UNSPECIFIED)) {
+        if (copy_half_words(s->addr_space, desc->addr, msg.data, nwords,
+                            DMA_DIRECTION_TO_DEVICE)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
