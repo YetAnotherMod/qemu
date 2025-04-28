@@ -92,6 +92,15 @@
 #define BC_DESC_RETMD_SAME_THEN_ANOTHER 0b10
 #define BC_DESC_RETMD_RESERVED 0b11
 
+#define BC_DESC_RTST_TERMINAL_FLAG (1 << 0)
+#define BC_DESC_RTST_BUS_ACCPET (1 << 1)
+#define BC_DESC_RTST_SUBSYSTEM_FLAG (1 << 2)
+#define BC_DESC_RTST_BUSY (1 << 3)
+#define BC_DESC_RTST_BROADCAST (1 << 4)
+#define BC_DESC_RTST_SERVICE_REQUEST (1 << 5)
+#define BC_DESC_RTST_INSTRUMENTATION (1 << 6)
+#define BC_DESC_RTST_MSG_ERROR (1 << 7)
+
 /*
  * common DMA logic
  */
@@ -392,6 +401,20 @@ static bool bc_virtmko_recv_wait(GR1553BState *s)
     return s->resp_valid;
 }
 
+static uint32_t virtmko_rt_result_to_gr1553(vmko_msg *msg)
+{
+    uint32_t rtst = 0;
+    rtst |= msg->rt_fault ? BC_DESC_RTST_TERMINAL_FLAG : 0;
+    rtst |= msg->control_accept ? BC_DESC_RTST_BUS_ACCPET : 0;
+    rtst |= msg->sub_fault ? BC_DESC_RTST_SUBSYSTEM_FLAG : 0;
+    rtst |= msg->busy ? BC_DESC_RTST_BUSY : 0;
+    rtst |= msg->group ? BC_DESC_RTST_BROADCAST : 0;
+    rtst |= msg->request ? BC_DESC_RTST_SERVICE_REQUEST : 0;
+    rtst |= msg->sw_transmit ? BC_DESC_RTST_INSTRUMENTATION : 0;
+    rtst |= msg->msg_error ? BC_DESC_RTST_MSG_ERROR : 0;
+    return rtst;
+}
+
 static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
 {
     vmko_msg msg;
@@ -414,7 +437,10 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
 
         if (bc_virtmko_recv_wait(s) == false) {
             desc->result.tfrst = BC_TFRST_RT_NO_REPSONSE;
+            return;
         }
+
+        desc->result.rtst = virtmko_rt_result_to_gr1553(&s->resp);
         break;
 
     case 2:
@@ -422,14 +448,16 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
 
         if (bc_virtmko_recv_wait(s) == false) {
             desc->result.tfrst = BC_TFRST_RT_NO_REPSONSE;
-            break;
+            return;
         }
 
-        if (copy_half_words(s->addr_space, desc->addr, msg.data, nwords,
+        if (copy_half_words(s->addr_space, desc->addr, s->resp.data, nwords,
                             DMA_DIRECTION_TO_DEVICE)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
+
+        desc->result.rtst = virtmko_rt_result_to_gr1553(&s->resp);
         break;
 
     default:
