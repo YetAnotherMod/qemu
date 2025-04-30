@@ -510,7 +510,7 @@ static void exec_msg_desc(GR1553BState *s, uint32_t curr_addr, bc_trans_desc_t *
     /* this bits are not supported yet */
     assert(desc->word0.wtrig == 0);
     assert(desc->word0.stbus == 0);
-    assert(desc->word0.gap == 0);
+    /* assert(desc->word0.gap == 0); FIXME: придумать как обрабатывать gap */
 
     /* first try */
     desc->result.val = 0;
