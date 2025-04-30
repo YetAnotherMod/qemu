@@ -59,6 +59,9 @@
 #define BC_ACT_SCHED_SUSPEND (1 << 1)
 #define BC_ACT_SCHED_START (1 << 0)
 
+#define BC_TT_IRQ_RING_POS_BASE_MASK 0xffffffc0
+#define BC_TT_IRQ_RING_POS_OFFSET_MASK 0x3c
+
 #define RT_STATUS_RTSUP (1 << 31)
 #define RT_STATUS_ACT (1 << 3)
 #define RT_STATUS_SHDA (1 << 2)
@@ -83,6 +86,53 @@
 #define RT_KEY 0x15530000
 
 #define MKO_MAX_WORDS 32
+
+#define BC_DESC_RETMD_SAME_BUS 0b00
+#define BC_DESC_RETMD_SWAP_EVERY_RETRY 0b01
+#define BC_DESC_RETMD_SAME_THEN_ANOTHER 0b10
+#define BC_DESC_RETMD_RESERVED 0b11
+
+#define BC_DESC_RTST_TERMINAL_FLAG (1 << 0)
+#define BC_DESC_RTST_BUS_ACCPET (1 << 1)
+#define BC_DESC_RTST_SUBSYSTEM_FLAG (1 << 2)
+#define BC_DESC_RTST_BUSY (1 << 3)
+#define BC_DESC_RTST_BROADCAST (1 << 4)
+#define BC_DESC_RTST_SERVICE_REQUEST (1 << 5)
+#define BC_DESC_RTST_INSTRUMENTATION (1 << 6)
+#define BC_DESC_RTST_MSG_ERROR (1 << 7)
+
+/*
+ * common DMA logic
+ */
+static int write_u32(AddressSpace *as, dma_addr_t addr, uint32_t data)
+{
+    data = be32_to_cpu(data);
+
+    if (dma_memory_write(as, addr, &data, sizeof(uint32_t), MEMTXATTRS_UNSPECIFIED)) {
+        return -1;
+    }
+    return 0;
+}
+
+static int copy_half_words(AddressSpace *as, dma_addr_t addr, uint16_t *data,
+                           uint32_t words, DMADirection direction)
+{
+    dma_addr_t len = words * sizeof(uint16_t);
+    uint16_t *mem = dma_memory_map(as, addr, &len, direction, MEMTXATTRS_UNSPECIFIED);
+    if (mem == NULL || len != words * sizeof(uint16_t)) {
+        return -1;
+    }
+
+    uint16_t *src = (direction == DMA_DIRECTION_TO_DEVICE) ? data : mem;
+    uint16_t *dst = (direction == DMA_DIRECTION_TO_DEVICE) ? mem : data;
+
+    for (uint32_t i = 0; i < words; i++) {
+        *dst++ = bswap16(*src++);
+    }
+
+    dma_memory_unmap(as, mem, len, direction, len);
+    return 0;
+}
 
 /*
  * DMA logic for BC
@@ -260,16 +310,6 @@ static int read_rt_desc(AddressSpace *as, dma_addr_t addr, rt_desc_t *desc)
     return 0;
 }
 
-static int write_rt_u32(AddressSpace *as, dma_addr_t addr, uint32_t data)
-{
-    data = be32_to_cpu(data);
-
-    if (dma_memory_write(as, addr, &data, sizeof(uint32_t), MEMTXATTRS_UNSPECIFIED)) {
-        return -1;
-    }
-    return 0;
-}
-
 /*
  * controller logic
  */
@@ -361,10 +401,22 @@ static bool bc_virtmko_recv_wait(GR1553BState *s)
     return s->resp_valid;
 }
 
+static uint32_t virtmko_rt_result_to_gr1553(vmko_msg *msg)
+{
+    uint32_t rtst = 0;
+    rtst |= msg->rt_fault ? BC_DESC_RTST_TERMINAL_FLAG : 0;
+    rtst |= msg->control_accept ? BC_DESC_RTST_BUS_ACCPET : 0;
+    rtst |= msg->sub_fault ? BC_DESC_RTST_SUBSYSTEM_FLAG : 0;
+    rtst |= msg->busy ? BC_DESC_RTST_BUSY : 0;
+    rtst |= msg->group ? BC_DESC_RTST_BROADCAST : 0;
+    rtst |= msg->request ? BC_DESC_RTST_SERVICE_REQUEST : 0;
+    rtst |= msg->sw_transmit ? BC_DESC_RTST_INSTRUMENTATION : 0;
+    rtst |= msg->msg_error ? BC_DESC_RTST_MSG_ERROR : 0;
+    return rtst;
+}
+
 static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
 {
-    desc->result.val = 0;
-
     vmko_msg msg;
     msg.nwords = desc->word1.wcmc;
     msg.subaddr = desc->word1.rtsa1;
@@ -372,11 +424,11 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
     msg.addr = desc->word1.rtad1;
     msg.format = get_format(desc->word1);
 
-    uint32_t size = (msg.nwords ? msg.nwords : MKO_MAX_WORDS) * sizeof(uint16_t);
+    uint32_t nwords = msg.nwords ? msg.nwords : MKO_MAX_WORDS;
     switch (msg.format) {
     case 1:
-        if (dma_memory_read(s->addr_space, desc->addr, msg.data, size,
-                            MEMTXATTRS_UNSPECIFIED)) {
+        if (copy_half_words(s->addr_space, desc->addr, msg.data, nwords,
+                            DMA_DIRECTION_FROM_DEVICE)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
@@ -385,7 +437,10 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
 
         if (bc_virtmko_recv_wait(s) == false) {
             desc->result.tfrst = BC_TFRST_RT_NO_REPSONSE;
+            return;
         }
+
+        desc->result.rtst = virtmko_rt_result_to_gr1553(&s->resp);
         break;
 
     case 2:
@@ -393,14 +448,16 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
 
         if (bc_virtmko_recv_wait(s) == false) {
             desc->result.tfrst = BC_TFRST_RT_NO_REPSONSE;
-            break;
+            return;
         }
 
-        if (dma_memory_write(s->addr_space, desc->addr, s->resp.data, size,
-                             MEMTXATTRS_UNSPECIFIED)) {
+        if (copy_half_words(s->addr_space, desc->addr, s->resp.data, nwords,
+                            DMA_DIRECTION_TO_DEVICE)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
+
+        desc->result.rtst = virtmko_rt_result_to_gr1553(&s->resp);
         break;
 
     default:
@@ -408,28 +465,89 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
     }
 }
 
-static void exec_msg_desc(GR1553BState *s, bc_trans_desc_t *desc)
+static void bc_write_to_irq_ring(GR1553BState *s, uint32_t addr)
 {
+    qemu_mutex_lock(&s->internal_mutex);
+
+    if (write_u32(s->addr_space, s->reg_bc_tt_irq_ring_pos + s->bc_tt_irq_ring_offset,
+                  addr)) {
+        /* FIXME: generate error? */
+        g_assert_not_reached();
+    }
+
+    /* advance pointer to next 32-bit word
+     * wrap ring-buffer at 64-byte boundary
+     */
+    s->bc_tt_irq_ring_offset += sizeof(uint32_t);
+    s->bc_tt_irq_ring_offset &= BC_TT_IRQ_RING_POS_OFFSET_MASK;
+
+    qemu_mutex_unlock(&s->internal_mutex);
+}
+
+static bool swap_bus_on_retry(uint32_t retmd, uint32_t nret, uint32_t retry_num)
+{
+    switch (retmd) {
+    case BC_DESC_RETMD_SAME_BUS:
+        return false;
+
+    case BC_DESC_RETMD_SWAP_EVERY_RETRY:
+        return true;
+
+    case BC_DESC_RETMD_SAME_THEN_ANOTHER:
+        if (retry_num == nret) {
+            return true;
+        }
+        return false;
+
+    default:
+        g_assert_not_reached();
+    }
+}
+
+static void exec_msg_desc(GR1553BState *s, uint32_t curr_addr, bc_trans_desc_t *desc)
+{
+    assert(desc->word0.retmd != BC_DESC_RETMD_RESERVED);
     /* this bits are not supported yet */
     assert(desc->word0.wtrig == 0);
-    assert(desc->word0.retmd == 0);
-    assert(desc->word0.nret == 0);
     assert(desc->word0.stbus == 0);
-    assert(desc->word0.gap == 0);
+    /* assert(desc->word0.gap == 0); FIXME: придумать как обрабатывать gap */
 
+    /* first try */
+    desc->result.val = 0;
     if (desc->word1.dummy) {
-        desc->result.val = 0;
         desc->result.tfrst = BC_TFRST_SUCCESS;
     } else {
+        bc_send_msg(s, desc);
+    }
+
+    /* retry if failed and set to
+     * retry count is calculated as (nret + 1) for same bus
+     * and (nret + 1)*2 for any swap
+     * first try we do separately, that's why no `+1` for same bus
+     * but we need `+1` for any swap
+     */
+    uint32_t retry_num = desc->word0.retmd == BC_DESC_RETMD_SAME_BUS
+                             ? desc->word0.nret
+                             : desc->word0.nret + desc->word0.nret + 1;
+    while (desc->result.tfrst != BC_TFRST_SUCCESS && retry_num--) {
+        /* dummy transfer cannot fail */
+        assert(desc->word1.dummy == 0);
+
+        desc->result.retcnt++;
+
+        /* `+1` here to properly calculate half */
+        if (swap_bus_on_retry(desc->word0.retmd, desc->word0.nret + 1,
+                              desc->result.retcnt)) {
+            desc->word1.bus = !desc->word1.bus;
+        }
+
         bc_send_msg(s, desc);
     }
 
     if (desc->result.tfrst) {
         if (desc->word0.irqe) {
             qatomic_or(&s->reg_irq, IRQ_BCEV);
-            qemu_mutex_lock_iothread();
-            gr1553b_update_irq(s);
-            qemu_mutex_unlock_iothread();
+            bc_write_to_irq_ring(s, curr_addr);
         }
 
         if (desc->word0.suse) {
@@ -440,9 +558,7 @@ static void exec_msg_desc(GR1553BState *s, bc_trans_desc_t *desc)
     } else {
         if (desc->word0.irqn) {
             qatomic_or(&s->reg_irq, IRQ_BCEV);
-            qemu_mutex_lock_iothread();
-            gr1553b_update_irq(s);
-            qemu_mutex_unlock_iothread();
+            bc_write_to_irq_ring(s, curr_addr);
         }
 
         if (desc->word0.susn) {
@@ -489,9 +605,6 @@ static uint32_t exec_branch_desc(GR1553BState *s, bc_trans_desc_t *desc,
 
     if (desc->condition.irqc) {
         qatomic_or(&s->reg_irq, IRQ_BCEV);
-        qemu_mutex_lock_iothread();
-        gr1553b_update_irq(s);
-        qemu_mutex_unlock_iothread();
     }
 
     if (desc->condition.act) {
@@ -534,7 +647,7 @@ static void *gr1553b_bc_thread(void *opaque)
             if (bc_desc.is_branch_desc) {
                 next_addr = exec_branch_desc(s, &bc_desc, curr_addr, prev_res);
             } else {
-                exec_msg_desc(s, &bc_desc);
+                exec_msg_desc(s, curr_addr, &bc_desc);
                 prev_res.val = bc_desc.result.val;
                 if (write_bc_trans_desc(s->addr_space, curr_addr, &bc_desc)) {
                     /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
@@ -542,6 +655,11 @@ static void *gr1553b_bc_thread(void *opaque)
                 }
                 next_addr = curr_addr + sizeof(bc_trans_desc_t);
             }
+
+            /* update irq only after desc was updated (if it was) */
+            qemu_mutex_lock_iothread();
+            gr1553b_update_irq(s);
+            qemu_mutex_unlock_iothread();
 
             if (s->reg_bc_trans == curr_addr) {
                 s->reg_bc_trans = next_addr;
@@ -644,9 +762,8 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
         }
 
         /* update subaddress entry pointer */
-        if (write_rt_u32(s->addr_space,
-                         entry_addr + offsetof(rt_subaddr_entry_t, rx_addr),
-                         desc.next_desc)) {
+        if (write_u32(s->addr_space, entry_addr + offsetof(rt_subaddr_entry_t, rx_addr),
+                      desc.next_desc)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
@@ -655,7 +772,7 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
         desc.word.sz = msg->nwords;
         desc.word.dv = 1;
 
-        if (write_rt_u32(s->addr_space, desc_addr, desc.word.val)) {
+        if (write_u32(s->addr_space, desc_addr, desc.word.val)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
@@ -670,9 +787,8 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
         }
 
         /* update subaddress entry pointer */
-        if (write_rt_u32(s->addr_space,
-                         entry_addr + offsetof(rt_subaddr_entry_t, tx_addr),
-                         desc.next_desc)) {
+        if (write_u32(s->addr_space, entry_addr + offsetof(rt_subaddr_entry_t, tx_addr),
+                      desc.next_desc)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
@@ -681,7 +797,7 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
         desc.word.sz = msg->nwords;
         desc.word.dv = 1;
 
-        if (write_rt_u32(s->addr_space, desc_addr, desc.word.val)) {
+        if (write_u32(s->addr_space, desc_addr, desc.word.val)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
@@ -693,8 +809,7 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
 
 static void bc_action_write(GR1553BState *s, uint32_t val)
 {
-    if (val & (BC_ACT_ASYNC_STOP | BC_ACT_ASYNC_START | BC_ACT_EXT_TRIG_CLEAR |
-        BC_ACT_EXT_TRIG_SET)) {
+    if (val & (BC_ACT_ASYNC_START | BC_ACT_EXT_TRIG_CLEAR | BC_ACT_EXT_TRIG_SET)) {
         g_assert_not_reached();
     }
 
@@ -753,7 +868,7 @@ static uint64_t gr1553b_read(void *opaque, hwaddr offset, unsigned size)
         break;
 
     case REG_BC_ASYNC_LIST_PTR:
-        g_assert_not_reached();
+        val = s->reg_bc_async_list_next_ptr;
         break;
 
     case REG_BC_TIMER:
@@ -765,7 +880,9 @@ static uint64_t gr1553b_read(void *opaque, hwaddr offset, unsigned size)
         break;
 
     case REG_BC_IRQ_RING_POS:
-        g_assert_not_reached();
+        qemu_mutex_lock(&s->internal_mutex);
+        val = s->reg_bc_tt_irq_ring_pos + s->bc_tt_irq_ring_offset;
+        qemu_mutex_unlock(&s->internal_mutex);
         break;
 
     case REG_BC_BUS_SWAP:
@@ -846,7 +963,7 @@ static void gr1553b_write(void *opaque, hwaddr offset, uint64_t val, unsigned si
         break;
 
     case REG_BC_ASYNC_LIST_PTR:
-        g_assert_not_reached();
+        s->reg_bc_async_list_next_ptr = val;
         break;
 
     case REG_BC_TIMER_WAKE_UP:
@@ -854,7 +971,10 @@ static void gr1553b_write(void *opaque, hwaddr offset, uint64_t val, unsigned si
         break;
 
     case REG_BC_IRQ_RING_POS:
-        g_assert_not_reached();
+        qemu_mutex_lock(&s->internal_mutex);
+        s->reg_bc_tt_irq_ring_pos = val & BC_TT_IRQ_RING_POS_BASE_MASK;
+        s->bc_tt_irq_ring_offset = val & BC_TT_IRQ_RING_POS_OFFSET_MASK;
+        qemu_mutex_unlock(&s->internal_mutex);
         break;
 
     case REG_BC_BUS_SWAP:
@@ -906,6 +1026,9 @@ static void gr1553b_reset(DeviceState *dev)
 
     s->reg_bc_trans = 0;
     s->bc_scst = BC_SCHED_STOPPED;
+    s->reg_bc_tt_irq_ring_pos = 0;
+    s->bc_tt_irq_ring_offset = 0;
+    s->reg_bc_async_list_next_ptr = 0;
     s->internal_signal = INTERNAL_SIGNAL_NONE;
 
     s->rt_addr = RT_RESET_ADDR;
@@ -949,16 +1072,6 @@ static void vmko_recv_hndl(vmko_controller *ctr, vmko_msg *msg)
     }
 }
 
-static void vmko_timeout_hndl(vmko_controller *ctr)
-{
-    /* FIXME: timeout can be triggered too early
-     * this can happen coz timeouts are not related with vmko_send function
-     * and it can trigger right after BC sended and waits for response
-     * so it receives NULL instead of normal response
-     */
-    vmko_recv_hndl(ctr, NULL);
-}
-
 /*
  * device code
  */
@@ -974,14 +1087,20 @@ static void gr1553b_realize(DeviceState *dev, Error **errp)
     /* internal */
     qemu_mutex_init(&s->internal_mutex);
     qemu_mutex_init(&s->bc_recv_wait);
+    /* initial state should be locked */
+    qemu_mutex_lock(&s->bc_recv_wait);
 
     /* virtmko */
     s->vmko_ctrl = vmko_new();
     /* TODO: придумать как передавать аргументы для подключения */
-    vmko_set_ip_port(s->vmko_ctrl, "224.5.0.141:3800");
-    vmko_set_timeout(s->vmko_ctrl, 1);
+    { /* FIXME: временное решение */
+        static int port = 3800;
+        char ip_port[32];
+        snprintf(ip_port, sizeof(ip_port), "224.5.0.141:%u", port++);
+        printf("mko[%u] ip:port are %s\n", port - 3801, ip_port);
+        vmko_set_ip_port(s->vmko_ctrl, ip_port);
+    }
     vmko_set_handler(s->vmko_ctrl, vmko_recv_hndl);
-    vmko_set_timeout_handler(s->vmko_ctrl, vmko_timeout_hndl);
     vmko_set_private_data(s->vmko_ctrl, s);
     vmko_start_threaded(s->vmko_ctrl);
 
