@@ -1029,7 +1029,7 @@ target_ulong helper_440_tlbsx(CPUPPCState *env, target_ulong address)
 /* Total number of bolted entries */
 #define PPC476_BOLTED_ENTRY_COUNT       6
 
-static void update_476_bolted_entry(CPUPPCState *env, int entry_num, uint32_t index)
+static int update_476_bolted_entry(CPUPPCState *env, int entry_num, uint32_t index)
 {
     target_ulong *ptr;
 
@@ -1037,25 +1037,43 @@ static void update_476_bolted_entry(CPUPPCState *env, int entry_num, uint32_t in
     ptr = entry_num < PPC476_BOLTED_ENTRY_COUNT / 2 ?
         &env->spr[SPR_476_MMUBE0] : &env->spr[SPR_476_MMUBE1];
 
+    int old_index = -1;
     switch (entry_num % (PPC476_BOLTED_ENTRY_COUNT / 2)) {
     case 0:
+        if (*ptr & PPC476_MMUBE_VALID_0) {
+            old_index = *ptr >> PPC476_MMUBE_INDEX_SHIFT_0;
+            old_index &= PPC476_MMUBE_INDEX_MASK;
+        }
+
         *ptr &= ~(PPC476_MMUBE_INDEX_MASK << PPC476_MMUBE_INDEX_SHIFT_0);
         *ptr |= (index & PPC476_MMUBE_INDEX_MASK) << PPC476_MMUBE_INDEX_SHIFT_0;
         *ptr |= PPC476_MMUBE_VALID_0;
         break;
 
     case 1:
+        if (*ptr & PPC476_MMUBE_VALID_1) {
+            old_index = *ptr >> PPC476_MMUBE_INDEX_SHIFT_1;
+            old_index &= PPC476_MMUBE_INDEX_MASK;
+        }
+
         *ptr &= ~(PPC476_MMUBE_INDEX_MASK << PPC476_MMUBE_INDEX_SHIFT_1);
         *ptr |= (index & PPC476_MMUBE_INDEX_MASK) << PPC476_MMUBE_INDEX_SHIFT_1;
         *ptr |= PPC476_MMUBE_VALID_1;
         break;
 
     case 2:
+        if (*ptr & PPC476_MMUBE_VALID_2) {
+            old_index = *ptr >> PPC476_MMUBE_INDEX_SHIFT_2;
+            old_index &= PPC476_MMUBE_INDEX_MASK;
+        }
+
         *ptr &= ~(PPC476_MMUBE_INDEX_MASK << PPC476_MMUBE_INDEX_SHIFT_2);
         *ptr |= (index & PPC476_MMUBE_INDEX_MASK) << PPC476_MMUBE_INDEX_SHIFT_2;
         *ptr |= PPC476_MMUBE_VALID_2;
         break;
     }
+
+    return old_index;
 }
 
 static void remove_476_bolted_entry(CPUPPCState *env, uint32_t index)
@@ -1332,7 +1350,14 @@ void helper_476_tlbwe(CPUPPCState *env, uint32_t word, target_ulong entry,
 
             // update MMUBE0 or MMUBE1 if this entry is bolted
             if (tlb->attr & PPC476_TLB_BOLTED_ENTRY) {
-                update_476_bolted_entry(env, bolted_entry_num, index);
+                int old_index = update_476_bolted_entry(env, bolted_entry_num, index);
+
+                // remove bolted bit from previous bolted entry
+                if (old_index != -1) {
+                    tlb = &env->tlb.tlbe[calc_476_tlb_entry(old_index, way,
+                                                            env->tlb_per_way)];
+                    tlb->attr &= ~PPC476_TLB_BOLTED_ENTRY;
+                }
             }
         }
         tlb_flush(env_cpu(env));
