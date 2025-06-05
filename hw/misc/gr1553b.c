@@ -576,27 +576,22 @@ static uint32_t exec_branch_desc(GR1553BState *s, bc_trans_desc_t *desc,
     /* default is just next address */
     uint32_t next_addr = curr_addr + sizeof(bc_trans_desc_t);
 
-    /* FIXME: is this correct calculations? and what is the `result`? */
     if (desc->condition.mode) {
         /* AND mode:
-         * - STCC != 0x0
+         * - previous result (tfrst) is in STCC bit mask
          * - all bits set in RT2CC,RTCC are set in RT2ST,RTST
-         * - result is in STCC mask
          */
-        condition = desc->condition.stcc != 0x0 &&
+        condition = desc->condition.stcc & (1u << prev_res.tfrst) &&
                     (prev_res.rtst & desc->condition.rtcc) == desc->condition.rtcc &&
-                    (prev_res.rt2st & desc->condition.rt2cc) == desc->condition.rt2cc &&
-                    (prev_res.rtst & desc->condition.stcc) == prev_res.rtst;
+                    (prev_res.rt2st & desc->condition.rt2cc) == desc->condition.rt2cc;
     } else {
         /* OR mode:
-         * - STCC == 0xFF
+         * - previous result (tfrst) is in STCC bit mask
          * - any bit set in RT2CC,RTCC is set in RT2ST,RTST
-         * - result is in STCC mask
          */
-        condition = desc->condition.stcc == 0xff ||
+        condition = desc->condition.stcc & (1u << prev_res.tfrst) ||
                     prev_res.rtst & desc->condition.rtcc ||
-                    prev_res.rt2st & desc->condition.rt2cc ||
-                    (prev_res.rtst & desc->condition.stcc) == prev_res.rtst;
+                    prev_res.rt2st & desc->condition.rt2cc;
     }
 
     if (!condition) {
