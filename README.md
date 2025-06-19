@@ -43,5 +43,11 @@ If you want to launch qemu with SD card use additional argument:
     -drive file=*path_to_sd_image_file*,if=sd,format=raw
 ```
 
+If you want to change boot jumpers value (for example to set value `0x82`) use parameter `boot-cfg`:
+
+```bash
+    -M mb115.01,boot-cfg=0x82
+```
+
 
 Original QEMU readme is renamed to [README_original.rst](README_original.rst)
