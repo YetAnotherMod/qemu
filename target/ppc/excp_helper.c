@@ -2888,13 +2888,40 @@ void helper_rfmci(CPUPPCState *env)
 void helper_tw(CPUPPCState *env, target_ulong arg1, target_ulong arg2,
                uint32_t flags)
 {
-    if (!likely(!(((int32_t)arg1 < (int32_t)arg2 && (flags & 0x10)) ||
-                  ((int32_t)arg1 > (int32_t)arg2 && (flags & 0x08)) ||
-                  ((int32_t)arg1 == (int32_t)arg2 && (flags & 0x04)) ||
-                  ((uint32_t)arg1 < (uint32_t)arg2 && (flags & 0x02)) ||
-                  ((uint32_t)arg1 > (uint32_t)arg2 && (flags & 0x01))))) {
-        raise_exception_err_ra(env, POWERPC_EXCP_PROGRAM,
-                               POWERPC_EXCP_TRAP, GETPC());
+    int trap = 0;
+
+    /* Trap always */
+    if (likely(flags == 31)) {
+        trap = 1;
+    } else if (!likely(
+                   !(((int32_t)arg1 < (int32_t)arg2 && (flags & 0x10)) ||
+                     ((int32_t)arg1 > (int32_t)arg2 && (flags & 0x08)) ||
+                     ((int32_t)arg1 == (int32_t)arg2 && (flags & 0x04)) ||
+                     ((uint32_t)arg1 < (uint32_t)arg2 && (flags & 0x02)) ||
+                     ((uint32_t)arg1 > (uint32_t)arg2 && (flags & 0x01))))) {
+        trap = 1;
+    }
+
+    if (trap) {
+        /* set `TRAP` bit int DBSR register */
+        env->spr[SPR_BOOKE_DBSR] |= 0x1000000;
+
+        /**
+         * if trap debug events are enabled (DBCR0[TRAP] = ‘1’)
+         * internal debug mode is enabled(DBCR0[IDM] = ‘1’)
+         * and debug interrupts are enabled (MSR[DE] = ‘1’),
+         * a trap exception causes a debug interrupt to occur
+         * rather than a program interrupt
+         * */
+        if (env->msr & R_MSR_DE_MASK &&
+            env->spr[SPR_BOOKE_DBCR0] & 0x41000000) {
+            raise_exception_err_ra(env, POWERPC_EXCP_DEBUG, 0, GETPC());
+        } else {
+            /* set `IDE` bit int DBSR register */
+            env->spr[SPR_BOOKE_DBSR] |= 0x80000000;
+            raise_exception_err_ra(env, POWERPC_EXCP_PROGRAM, POWERPC_EXCP_TRAP,
+                                   GETPC());
+        }
     }
 }
 

@@ -4591,11 +4591,7 @@ static bool check_unconditional_trap(DisasContext *ctx)
     if (TO(ctx->opcode) == 0) {
         return true;
     }
-    /* Trap always */
-    if (TO(ctx->opcode) == 31) {
-        gen_exception_err(ctx, POWERPC_EXCP_PROGRAM, POWERPC_EXCP_TRAP);
-        return true;
-    }
+
     return false;
 }
 
