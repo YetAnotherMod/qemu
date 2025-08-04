@@ -39,8 +39,6 @@
 
 #define SW_ADMA_CH_STATUS_RDMA_IRQ (1u << 0)
 #define SW_ADMA_CH_STATUS_WDMA_IRQ (1u << 16)
-#define SW_ADMA_CH_STATUS_ANY_IRQ \
-    (SW_ADMA_CH_STATUS_RDMA_IRQ | SW_ADMA_CH_STATUS_WDMA_IRQ)
 
 #define SW_RWDMA_SETTINGS_DESC_INT (1u << 0)
 #define SW_RWDMA_SETTINGS_ENABLE (1u << 28)
@@ -103,7 +101,14 @@ static void rcm_sw_update_irq(RCMSpaceWireState *s)
     // TODO: add core_irq functionality
     qemu_irq_lower(s->core_irq);
 
-    if (qatomic_read(&s->adma_ch_status) & SW_ADMA_CH_STATUS_ANY_IRQ) {
+    uint32_t rdma_irq = qatomic_read(&s->rdma_status) &
+                        qatomic_read(&s->rdma_settings) &
+                        SW_RWDMA_SETTINGS_DESC_INT;
+    uint32_t wdma_irq = qatomic_read(&s->wdma_status) &
+                        qatomic_read(&s->wdma_settings) &
+                        SW_RWDMA_SETTINGS_DESC_INT;
+
+    if (rdma_irq || wdma_irq) {
         qemu_irq_raise(s->dma_irq);
     } else {
         qemu_irq_lower(s->dma_irq);
@@ -115,7 +120,6 @@ static void rcm_sw_soft_reset(RCMSpaceWireState *s)
     s->settings = 0;
     qatomic_set(&s->rdma_settings, 0);
     qatomic_set(&s->wdma_settings, 0);
-    qatomic_set(&s->adma_ch_status, 0);
     qatomic_set(&s->rdma_status, 0);
     qatomic_set(&s->wdma_status, 0);
     s->rdma_sys_addr = 0;
@@ -265,17 +269,28 @@ static uint64_t rcm_sw_read(void *opaque, hwaddr offset, unsigned size)
         val = s->settings;
         break;
 
-    case SW_REG_ADMA_CH_STATUS:
-        val = qatomic_xchg(&s->adma_ch_status, 0);
-        rcm_sw_update_irq(s);
+    case SW_REG_ADMA_CH_STATUS: {
+        uint32_t rdma_irq = qatomic_read(&s->rdma_status) &
+                            qatomic_read(&s->rdma_settings) &
+                            SW_RWDMA_SETTINGS_DESC_INT;
+        uint32_t wdma_irq = qatomic_read(&s->wdma_status) &
+                            qatomic_read(&s->wdma_settings) &
+                            SW_RWDMA_SETTINGS_DESC_INT;
+
+        val = rdma_irq ? SW_ADMA_CH_STATUS_RDMA_IRQ : 0;
+        val |= wdma_irq ? SW_ADMA_CH_STATUS_WDMA_IRQ : 0;
         break;
+    }
 
     case SW_REG_RDMA_SETTINGS:
         val = qatomic_read(&s->rdma_settings);
         break;
 
     case SW_REG_RDMA_STATUS:
+        qemu_mutex_lock(&s->rdma_mutex);
         val = qatomic_xchg(&s->rdma_status, 0);
+        qemu_mutex_unlock(&s->rdma_mutex);
+        rcm_sw_update_irq(s);
         break;
 
     case SW_REG_WDMA_SETTINGS:
@@ -283,7 +298,10 @@ static uint64_t rcm_sw_read(void *opaque, hwaddr offset, unsigned size)
         break;
 
     case SW_REG_WDMA_STATUS:
+        qemu_mutex_lock(&s->wdma_mutex);
         val = qatomic_xchg(&s->wdma_status, 0);
+        qemu_mutex_unlock(&s->wdma_mutex);
+        rcm_sw_update_irq(s);
         break;
 
     case SW_REG_RDMA_SYS_ADDR:
@@ -455,8 +473,10 @@ static void rcm_sw_read_done(sw_controller *ctr, void *private_data,
 
     if (desc_interrupt &&
         (qatomic_read(&s->wdma_settings) & SW_RWDMA_SETTINGS_DESC_INT)) {
+        qemu_mutex_lock(&s->wdma_mutex);
         qatomic_or(&s->wdma_status, SW_RWDMA_SETTINGS_DESC_INT);
-        qatomic_or(&s->adma_ch_status, SW_ADMA_CH_STATUS_WDMA_IRQ);
+        qemu_mutex_unlock(&s->wdma_mutex);
+
         qemu_mutex_lock_iothread();
         rcm_sw_update_irq(s);
         qemu_mutex_unlock_iothread();
@@ -504,8 +524,10 @@ static void rcm_sw_write_done(sw_controller *ctr, void *private_data,
 
     if (desc_interrupt &&
         (qatomic_read(&s->rdma_settings) & SW_RWDMA_SETTINGS_DESC_INT)) {
+        qemu_mutex_lock(&s->rdma_mutex);
         qatomic_or(&s->rdma_status, SW_RWDMA_SETTINGS_DESC_INT);
-        qatomic_or(&s->adma_ch_status, SW_ADMA_CH_STATUS_RDMA_IRQ);
+        qemu_mutex_unlock(&s->rdma_mutex);
+
         qemu_mutex_lock_iothread();
         rcm_sw_update_irq(s);
         qemu_mutex_unlock_iothread();

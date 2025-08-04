@@ -17,7 +17,6 @@ struct RCMSpaceWireState {
     MemoryRegion iomem;
 
     uint32_t settings;
-    uint32_t adma_ch_status; /* access using atomics */
 
     QemuMutex rdma_mutex;
     uint32_t rdma_settings; /* access using atomics */
