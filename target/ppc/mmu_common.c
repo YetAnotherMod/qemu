@@ -985,6 +985,10 @@ static int mmubooke206_check_tlb(CPUPPCState *env, ppcmas_tlb_t *tlb,
 
 found_tlb:
 
+    if (tlb->mas2 & MAS2_E) {
+        prot2 |= PAGE_LE;
+    }
+
     if (pr) {
         if (tlb->mas7_3 & MAS3_UR) {
             prot2 |= PAGE_READ;

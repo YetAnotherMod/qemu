@@ -487,10 +487,12 @@ ssize_t load_elf_ram_sym(const char *filename,
         target_data_order = ELFDATA2LSB;
     }
 
+    /*
     if (target_data_order != e_ident[EI_DATA]) {
         ret = ELF_LOAD_WRONG_ENDIAN;
         goto fail;
     }
+    */
 
     lseek(fd, 0, SEEK_SET);
     if (e_ident[EI_CLASS] == ELFCLASS64) {

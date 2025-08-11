@@ -86,7 +86,7 @@ void ppc_maybe_bswap_register(CPUPPCState *env, uint8_t *mem_buf, int len)
 #ifndef CONFIG_USER_ONLY
     bool le_page = false;
 
-    if (env->mmu_model == POWERPC_MMU_476FP) {
+    if (env->mmu_model == POWERPC_MMU_476FP || env->mmu_model == POWERPC_MMU_BOOKE206) {
         mmu_ctx_t ctx = {.prot = 0};
         get_physical_address_wtlb(env, &ctx, env->nip, MMU_INST_FETCH, 0,
                                   cpu_mmu_index(env, true));
