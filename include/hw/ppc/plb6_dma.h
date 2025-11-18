@@ -58,6 +58,7 @@ typedef struct PLB6DMAState {
     plb6_dma_channel channels[NUMBER_OF_CHANNELS];
     qemu_irq irqs[NUMBER_OF_IRQS];
     status_reg_s status_reg;
+    uint32_t arbiter_mode;
 } PLB6DMAState;
 
 #define TYPE_PLB6_DMA "PLB6_DMA"

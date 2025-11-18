@@ -24,10 +24,13 @@
 #define REG_CHANNEL_DST_ADDR_L 0x06
 
 #define REG_STATUS 0x40
+#define REG_PLB_ARBITER_MODE 0x48
 
 #define REG_STATUS_MUTABLE_BITS_MASK 0xF8888000
 #define REG_STATUS_CS_ACCESS(ch_number) (1 << (31 - (ch_number)))
 #define REG_STATUS_ERROR_ACCESS(ch_number) (1 << (27 - (ch_number) * 4))
+
+#define REG_PLB_ARBITER_MODE_MASK 0xC0000000
 
 #define GET_CURRENT_REGISTER(addr) ((addr) & 0xF)
 #define GET_CURRENT_CHANNEL(addr) (((addr) >> 0x4) & 0x3)
@@ -171,6 +174,9 @@ static uint32_t plb6_dma_read(void *opaque, int dcrn) {
     case REG_STATUS:
         val = s->status_reg.reg_value;
         break;
+    case REG_PLB_ARBITER_MODE:
+        val = s->arbiter_mode;
+        break;
     default:
         break;
     }
@@ -244,6 +250,9 @@ static void plb6_dma_write(void *opaque, int dcrn, uint32_t val) {
             }
         }
         break;
+    case REG_PLB_ARBITER_MODE:
+        s->arbiter_mode = val & REG_PLB_ARBITER_MODE_MASK;
+        break;
     default:
         break;
     }
@@ -261,6 +270,7 @@ static void plb6_dma_reset(DeviceState *dev) {
     }
 
     s->status_reg.reg_value = 0;
+    s->arbiter_mode = 0;
 }
 
 static void plb6_dma_realize(DeviceState *dev, Error **errp) {
@@ -290,6 +300,8 @@ static void plb6_dma_realize(DeviceState *dev, Error **errp) {
                          plb6_dma_read, plb6_dma_write);
     }
     ppc_dcr_register(env, s->baseaddr + REG_STATUS, s, plb6_dma_read,
+                     plb6_dma_write);
+    ppc_dcr_register(env, s->baseaddr + REG_PLB_ARBITER_MODE, s, plb6_dma_read,
                      plb6_dma_write);
 
     for (i = 0; i < NUMBER_OF_IRQS; i++) {
