@@ -802,6 +802,11 @@ static void mm7705_reset(MachineState *machine, ShutdownCause reason)
 
     // FIXME: не надо ли как-то по-другому помещать прошивку в память?
     {
+        if (!machine->firmware) {
+            printf("`firmware` file was not passed to boot from internal rom\n");
+            exit(-1);
+        }
+
         uint32_t file_size = 256 * KiB;
         uint8_t data[256 * KiB];
         int fd = open(machine->firmware, O_RDONLY);

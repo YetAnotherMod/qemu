@@ -720,7 +720,12 @@ static void oi10_o32t_reset(DeviceState *dev)
     Oi10O32tState *s = OI10_O32T(dev);
 
     // FIXME: не надо ли как-то по-другому помещать прошивку в память?
-    {
+    if (s->boot_cfg & (1 << OI10_O32T_USE_INTERNAL_ROM)) {
+        if (!s->firmware) {
+            printf("`firmware` file was not passed to boot from internal rom\n");
+            exit(-1);
+        }
+
         uint32_t file_size = 64 * KiB;
         uint8_t data[64 * KiB];
         int fd = open(s->firmware, O_RDONLY);
