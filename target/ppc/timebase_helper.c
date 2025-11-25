@@ -161,7 +161,7 @@ void helper_store_tfmr(CPUPPCState *env, target_ulong val)
 /* Embedded PowerPC specific helpers */
 
 /* XXX: to be improved to check access rights when in user-mode */
-target_ulong helper_load_dcr(CPUPPCState *env, target_ulong dcrn)
+target_ulong helper_load_dcr(CPUPPCState *env, target_ulong dcrn, uint32_t indexed)
 {
     uint32_t val = 0;
 
@@ -174,6 +174,10 @@ target_ulong helper_load_dcr(CPUPPCState *env, target_ulong dcrn)
         int ret;
 
         qemu_mutex_lock_iothread();
+        if (!indexed) {
+            // powerpc 476 feature with DCRIPR register for mtdcr/mfdcr
+            dcrn |= env->spr[SPR_DCRIPR] & 0xfffffc00;
+        }
         ret = ppc_dcr_read(env->dcr_env, (uint32_t)dcrn, &val);
         qemu_mutex_unlock_iothread();
         if (unlikely(ret != 0)) {
@@ -187,7 +191,8 @@ target_ulong helper_load_dcr(CPUPPCState *env, target_ulong dcrn)
     return val;
 }
 
-void helper_store_dcr(CPUPPCState *env, target_ulong dcrn, target_ulong val)
+void helper_store_dcr(CPUPPCState *env, target_ulong dcrn, target_ulong val,
+                      uint32_t indexed)
 {
     if (unlikely(env->dcr_env == NULL)) {
         qemu_log_mask(LOG_GUEST_ERROR, "No DCR environment\n");
@@ -197,6 +202,10 @@ void helper_store_dcr(CPUPPCState *env, target_ulong dcrn, target_ulong val)
     } else {
         int ret;
         qemu_mutex_lock_iothread();
+        if (!indexed) {
+            // powerpc 476 feature with DCRIPR register for mtdcr/mfdcr
+            dcrn |= env->spr[SPR_DCRIPR] & 0xfffffc00;
+        }
         ret = ppc_dcr_write(env->dcr_env, (uint32_t)dcrn, (uint32_t)val);
         qemu_mutex_unlock_iothread();
         if (unlikely(ret != 0)) {

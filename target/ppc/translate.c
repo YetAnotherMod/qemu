@@ -5656,7 +5656,7 @@ static void gen_mfdcr(DisasContext *ctx)
 
     CHK_SV(ctx);
     dcrn = tcg_constant_tl(SPR(ctx->opcode));
-    gen_helper_load_dcr(cpu_gpr[rD(ctx->opcode)], tcg_env, dcrn);
+    gen_helper_load_dcr(cpu_gpr[rD(ctx->opcode)], tcg_env, dcrn, tcg_constant_i32(0));
 #endif /* defined(CONFIG_USER_ONLY) */
 }
 
@@ -5670,7 +5670,7 @@ static void gen_mtdcr(DisasContext *ctx)
 
     CHK_SV(ctx);
     dcrn = tcg_constant_tl(SPR(ctx->opcode));
-    gen_helper_store_dcr(tcg_env, dcrn, cpu_gpr[rS(ctx->opcode)]);
+    gen_helper_store_dcr(tcg_env, dcrn, cpu_gpr[rS(ctx->opcode)], tcg_constant_i32(0));
 #endif /* defined(CONFIG_USER_ONLY) */
 }
 
@@ -5683,7 +5683,7 @@ static void gen_mfdcrx(DisasContext *ctx)
 #else
     CHK_SV(ctx);
     gen_helper_load_dcr(cpu_gpr[rD(ctx->opcode)], tcg_env,
-                        cpu_gpr[rA(ctx->opcode)]);
+                        cpu_gpr[rA(ctx->opcode)], tcg_constant_i32(1));
     /* Note: Rc update flag set leads to undefined state of Rc0 */
 #endif /* defined(CONFIG_USER_ONLY) */
 }
@@ -5697,7 +5697,7 @@ static void gen_mtdcrx(DisasContext *ctx)
 #else
     CHK_SV(ctx);
     gen_helper_store_dcr(tcg_env, cpu_gpr[rA(ctx->opcode)],
-                         cpu_gpr[rS(ctx->opcode)]);
+                         cpu_gpr[rS(ctx->opcode)], tcg_constant_i32(1));
     /* Note: Rc update flag set leads to undefined state of Rc0 */
 #endif /* defined(CONFIG_USER_ONLY) */
 }

@@ -709,8 +709,8 @@ DEF_HELPER_4(dlmzb, tl, env, tl, tl, i32)
 #if !defined(CONFIG_USER_ONLY)
 DEF_HELPER_2(rac, tl, env, tl)
 
-DEF_HELPER_2(load_dcr, tl, env, tl)
-DEF_HELPER_3(store_dcr, void, env, tl, tl)
+DEF_HELPER_3(load_dcr, tl, env, tl, i32)
+DEF_HELPER_4(store_dcr, void, env, tl, tl, i32)
 #endif
 
 DEF_HELPER_2(load_dump_spr, void, env, i32)
