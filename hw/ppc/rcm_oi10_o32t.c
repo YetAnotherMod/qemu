@@ -322,8 +322,9 @@ static void add_spacewire_controllers(Oi10O32tState *s,
     char name[8];
 
     for (uint32_t i = 0; i < SW_COUNT; i++) {
-        snprintf(name, sizeof(name), "sw[%u]", i);
+        snprintf(name, sizeof(name), "sw%u", i);
         object_initialize_child(OBJECT(s), name, &s->sw[i], TYPE_RCM_SPACEWIRE);
+        qdev_prop_set_chr(DEVICE(&s->sw[i]), "chardev", qemu_chr_find(name));
         rcm_sw_change_address_space(&s->sw[i], addr_space, &error_fatal);
         sysbus_realize(SYS_BUS_DEVICE(&s->sw[i]), &error_fatal);
         SysBusDevice *busdev = SYS_BUS_DEVICE(&s->sw[i]);
@@ -347,9 +348,9 @@ static void add_spacewire_controllers(Oi10O32tState *s,
 
     for (uint32_t i = 0; i < SW_COUNT; i++) {
         snprintf(name, sizeof(name), "sw[%u]", i);
-        MemoryRegion *mko = g_new(MemoryRegion, 1);
-        memory_region_init_ram(mko, NULL, name, 4 * KiB, &error_fatal);
-        memory_region_add_subregion(get_system_memory(), addr[i], mko);
+        MemoryRegion *sw = g_new(MemoryRegion, 1);
+        memory_region_init_ram(sw, NULL, name, 4 * KiB, &error_fatal);
+        memory_region_add_subregion(get_system_memory(), addr[i], sw);
     }
 }
 #endif
