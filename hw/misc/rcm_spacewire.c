@@ -5,6 +5,8 @@
 #include "qemu/osdep.h"
 #include "qapi/error.h"
 #include "hw/irq.h"
+#include "hw/qdev-properties.h"
+#include "hw/qdev-properties-system.h"
 
 #include "hw/misc/rcm_spacewire.h"
 
@@ -168,7 +170,21 @@ static void rcm_sw_wdma_recv(RCMSpaceWireState *s)
     if (s->settings & SW_SETTINGS_LOOPBACK) {
         g_assert_not_reached();
     } else {
-        if (sw_read_start(s->sw_ctrl, desc.length)) {
+        s->wdma_len = desc.length;
+        char *ptr = dma_memory_map(s->addr_space, desc.addr, &s->wdma_len,
+                                   DMA_DIRECTION_FROM_DEVICE, MEMTXATTRS_UNSPECIFIED);
+        if (!ptr) {
+            /* FIXME: ?? */
+            g_assert_not_reached();
+        }
+
+        sw_data data = {
+            .packet_end = SW_PACKET_EOP,
+            .size = desc.length,
+            .data = ptr,
+        };
+
+        if (sw_logic_read_request(s->sw_logic, &data)) {
             /* FIXME: ?? */
             g_assert_not_reached();
         }
@@ -233,7 +249,7 @@ static void rcm_sw_rdma_send(RCMSpaceWireState *s)
             .data = ptr,
         };
 
-        if (sw_write_start(s->sw_ctrl, &data)) {
+        if (sw_logic_write_request(s->sw_logic, &data)) {
             /* FIXME: ?? */
             g_assert_not_reached();
         }
@@ -433,10 +449,9 @@ static const MemoryRegionOps rcm_sw_ops = {
 /*
  * virtsw logic
  */
-static void rcm_sw_read_done(sw_controller *ctr, void *private_data,
-                             sw_data *data, sw_status status)
+static void rcm_sw_read_done(sw_data *data, void *user_data)
 {
-    RCMSpaceWireState *s = private_data;
+    RCMSpaceWireState *s = user_data;
 
     /* for now support only full and good packets */
     g_assert(data->packet_end == SW_PACKET_EOP);
@@ -451,19 +466,13 @@ static void rcm_sw_read_done(sw_controller *ctr, void *private_data,
     }
 
     // обработать текущий дескриптор
-    if (dma_memory_write(s->addr_space, desc.addr, data->data, data->size,
-                         MEMTXATTRS_UNSPECIFIED)) {
-        // FIXME: set error???
-        g_assert_not_reached();
-    }
-
     bool desc_interrupt = desc.interrupt ? true : false;
 
     desc.activity = SW_DESC_ACTIVITY_COMPL;
     desc.length = data->size;
     desc.with_end = 1;
     desc.parity_error = 0;
-    desc.connection_error = status == SW_OK ? 0 : 1;
+    desc.connection_error = 0; //FIXME: тут был раньше sw_status: status == SW_OK ? 0 : 1;
     desc.valid = 1;
 
     if (write_dma_desc(s, s->wdma_sys_addr + offset, &desc)) {
@@ -471,15 +480,19 @@ static void rcm_sw_read_done(sw_controller *ctr, void *private_data,
         g_assert_not_reached();
     }
 
+    dma_memory_unmap(s->addr_space, data->data, s->wdma_len,
+                     DMA_DIRECTION_FROM_DEVICE, data->size);
+
     if (desc_interrupt &&
         (qatomic_read(&s->wdma_settings) & SW_RWDMA_SETTINGS_DESC_INT)) {
-        qemu_mutex_lock(&s->wdma_mutex);
+        // FIXME: do we even need this mutex here?
+        int locked = qemu_mutex_trylock(&s->wdma_mutex);
         qatomic_or(&s->wdma_status, SW_RWDMA_SETTINGS_DESC_INT);
-        qemu_mutex_unlock(&s->wdma_mutex);
+        if (locked) {
+            qemu_mutex_unlock(&s->wdma_mutex);
+        }
 
-        qemu_mutex_lock_iothread();
         rcm_sw_update_irq(s);
-        qemu_mutex_unlock_iothread();
     }
 
     // переход на следующий
@@ -488,15 +501,17 @@ static void rcm_sw_read_done(sw_controller *ctr, void *private_data,
         s->wdma_tbl_size = s->wdma_tbl_size_internal;
     }
 
-    qemu_mutex_lock(&s->wdma_mutex);
+    // FIXME: do we even need this mutex here?
+    int locked = qemu_mutex_trylock(&s->wdma_mutex);
     rcm_sw_wdma_recv(s);
-    qemu_mutex_unlock(&s->wdma_mutex);
+    if (locked) {
+        qemu_mutex_unlock(&s->wdma_mutex);
+    }
 }
 
-static void rcm_sw_write_done(sw_controller *ctr, void *private_data,
-                              sw_data *data, sw_status status)
+static void rcm_sw_write_done(sw_data *data, void *user_data)
 {
-    RCMSpaceWireState *s = private_data;
+    RCMSpaceWireState *s = user_data;
 
     // взять текущий дескриптор
     sw_dma_desc_t desc = {0};
@@ -512,7 +527,7 @@ static void rcm_sw_write_done(sw_controller *ctr, void *private_data,
     // обработать текущий дескриптор
     desc.activity = SW_DESC_ACTIVITY_COMPL;
     desc.length = data->size;
-    desc.connection_error = status == SW_OK ? 0 : 1;
+    desc.connection_error = 0; //FIXME: тут был раньше sw_status: status == SW_OK ? 0 : 1;
 
     if (write_dma_desc(s, s->rdma_sys_addr + offset, &desc)) {
         // FIXME: set error???
@@ -524,13 +539,14 @@ static void rcm_sw_write_done(sw_controller *ctr, void *private_data,
 
     if (desc_interrupt &&
         (qatomic_read(&s->rdma_settings) & SW_RWDMA_SETTINGS_DESC_INT)) {
-        qemu_mutex_lock(&s->rdma_mutex);
+        // FIXME: do we even need this mutex here?
+        int locked = qemu_mutex_trylock(&s->rdma_mutex);
         qatomic_or(&s->rdma_status, SW_RWDMA_SETTINGS_DESC_INT);
-        qemu_mutex_unlock(&s->rdma_mutex);
+        if (locked) {
+            qemu_mutex_unlock(&s->rdma_mutex);
+        }
 
-        qemu_mutex_lock_iothread();
         rcm_sw_update_irq(s);
-        qemu_mutex_unlock_iothread();
     }
 
     // переход на следующий дескриптор
@@ -539,9 +555,41 @@ static void rcm_sw_write_done(sw_controller *ctr, void *private_data,
         s->rdma_tbl_size = s->rdma_tbl_size_internal;
     }
 
-    qemu_mutex_lock(&s->rdma_mutex);
+    // FIXME: do we even need this mutex here?
+    int locked = qemu_mutex_trylock(&s->rdma_mutex);
     rcm_sw_rdma_send(s);
-    qemu_mutex_unlock(&s->rdma_mutex);
+    if (locked) {
+            qemu_mutex_unlock(&s->rdma_mutex);
+    }
+}
+
+static void rcm_sw_logic_send_to_chardev(void *buf, uint32_t length, void *user_data)
+{
+    RCMSpaceWireState *s = user_data;
+
+    qemu_chr_fe_write_all(&s->chardev, buf, length);
+}
+
+static int rcm_sw_chardev_can_receive(void *opaque)
+{
+    (void)opaque;
+    // FIXME: what to do with this number
+    return 1024;
+}
+
+static void rcm_sw_chardev_receive(void *opaque, const uint8_t *data_char, int size)
+{
+    RCMSpaceWireState *s = opaque;
+
+    sw_logic_data_from_interface(s->sw_logic, data_char, size);
+}
+
+static void rcm_sw_chardev_event(void* opaque, QEMUChrEvent evt) {
+    RCMSpaceWireState *s = RCM_SPACEWIRE(opaque);
+
+    if (evt == CHR_EVENT_OPENED) {
+        sw_logic_interface_connected(s->sw_logic);
+    }
 }
 
 /*
@@ -561,17 +609,12 @@ static void rcm_sw_realize(DeviceState *dev, Error **errp)
     qemu_mutex_init(&s->rdma_mutex);
     qemu_mutex_init(&s->wdma_mutex);
 
-    /* TODO: придумать как передавать аргументы для подключения */
-    { /* FIXME: временное решение */
-        static int port = 8890;
-        char ip_port[32];
-        snprintf(ip_port, sizeof(ip_port), "0.0.0.0:%u", port++);
-        printf("spacewire[%u] ip:port are %s\n", port - 8891, ip_port);
-        s->sw_ctrl = sw_new(ip_port);
-    }
-    if (sw_start_thread(s->sw_ctrl, rcm_sw_read_done, rcm_sw_write_done, s)) {
-        error_setg(errp, "Couldn't create virtsw thread\n");
-    }
+    s->sw_logic = sw_logic_new(rcm_sw_logic_send_to_chardev, rcm_sw_write_done,
+                               rcm_sw_read_done, s);
+
+    qemu_chr_fe_set_handlers(&s->chardev, rcm_sw_chardev_can_receive,
+                             rcm_sw_chardev_receive, rcm_sw_chardev_event,
+                             NULL, s, NULL, true);
 
     // set default address space
     if (s->addr_space == NULL) {
@@ -589,6 +632,11 @@ void rcm_sw_change_address_space(RCMSpaceWireState *s, AddressSpace *addr_space,
     s->addr_space = addr_space;
 }
 
+static Property rcm_sw_properties[] = {
+    DEFINE_PROP_CHR("chardev", RCMSpaceWireState, chardev),
+    DEFINE_PROP_END_OF_LIST(),
+};
+
 static void rcm_sw_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -596,6 +644,7 @@ static void rcm_sw_class_init(ObjectClass *klass, void *data)
     dc->desc = "RC Module spacewire controller";
     dc->realize = rcm_sw_realize;
     dc->reset = rcm_sw_reset;
+    device_class_set_props(dc, rcm_sw_properties);
 }
 
 static const TypeInfo rcm_sw_info = {

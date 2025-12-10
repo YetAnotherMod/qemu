@@ -3,8 +3,9 @@
 
 #include "hw/sysbus.h"
 #include "sysemu/dma.h"
+#include "chardev/char-fe.h"
 
-#include "virtsw.h"
+#include "virtsw_logic.h"
 
 struct RCMSpaceWireState {
     /*< private >*/
@@ -38,8 +39,10 @@ struct RCMSpaceWireState {
     qemu_irq dma_irq;
 
     /* virtsw */
-    sw_controller *sw_ctrl;
+    sw_logic_t *sw_logic;
+    CharBackend chardev;
     dma_addr_t rdma_len;
+    dma_addr_t wdma_len;
 };
 
 typedef struct RCMSpaceWireState RCMSpaceWireState;
