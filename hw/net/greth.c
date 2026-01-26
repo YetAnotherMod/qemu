@@ -746,7 +746,7 @@ static void greth_write(void *opaque, hwaddr offset, uint64_t val, unsigned size
             greth_send_all(s);
         }
 
-        if (val & CONTROL_RECV_EN) {
+        if (val & CONTROL_RECV_EN || !(val & CONTROL_EDCL_DISABLE)) {
             if (greth_can_receive(qemu_get_queue(s->nic))) {
                 qemu_flush_queued_packets(qemu_get_queue(s->nic));
             }
