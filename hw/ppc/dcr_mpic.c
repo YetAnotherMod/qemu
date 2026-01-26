@@ -5,6 +5,7 @@
 #include "hw/ppc/ppc.h"
 #include "hw/ppc/dcr_mpic.h"
 #include "hw/irq.h"
+#include "qapi/visitor.h"
 
 #define REGS_MASK           0xfffff
 
@@ -743,6 +744,24 @@ static void mpic_device_reset(DeviceState *dev)
     mpic_reset(s);
 }
 
+static void fi_change_line_irq_setter(Object *obj, Visitor *v, const char *name,
+                                      void *opaque, Error **errp)
+{
+    MpicState *s = MPIC(obj);
+
+    int action = strstr(name, "raise") ? 1 : 0;
+
+    uint32_t value;
+    visit_type_uint32(v, name, &value, errp);
+
+    uint32_t base_value = GPOINTER_TO_INT(opaque) * 32;
+    for (uint32_t i = 0; value && i < 32; i++, value >>= 1) {
+        if (value & 1) {
+            mpic_input_irq(s, base_value + i, action);
+        }
+    }
+}
+
 static Property mpic_device_properties[] = {
     DEFINE_PROP_LINK("cpu-state", MpicState, cpu, TYPE_CPU, CPUState *),
     DEFINE_PROP_UINT32("baseaddr", MpicState, baseaddr, 0xffc00000),
@@ -757,6 +776,31 @@ static void mpic_device_class_init(ObjectClass *klass, void *data)
     dc->reset = mpic_device_reset;
     dc->realize = mpic_device_realize;
     device_class_set_props(dc, mpic_device_properties);
+
+    object_class_property_add(klass, "fi_raise_line_irq_0", "uint32",
+        NULL, fi_change_line_irq_setter,
+        NULL, GINT_TO_POINTER(0));
+    object_class_property_add(klass, "fi_raise_line_irq_1", "uint32",
+        NULL, fi_change_line_irq_setter,
+        NULL, GINT_TO_POINTER(1));
+    object_class_property_add(klass, "fi_raise_line_irq_2", "uint32",
+        NULL, fi_change_line_irq_setter,
+        NULL, GINT_TO_POINTER(2));
+    object_class_property_add(klass, "fi_raise_line_irq_3", "uint32",
+        NULL, fi_change_line_irq_setter,
+        NULL, GINT_TO_POINTER(3));
+    object_class_property_add(klass, "fi_lower_line_irq_0", "uint32",
+        NULL, fi_change_line_irq_setter,
+        NULL, GINT_TO_POINTER(0));
+    object_class_property_add(klass, "fi_lower_line_irq_1", "uint32",
+        NULL, fi_change_line_irq_setter,
+        NULL, GINT_TO_POINTER(1));
+    object_class_property_add(klass, "fi_lower_line_irq_2", "uint32",
+        NULL, fi_change_line_irq_setter,
+        NULL, GINT_TO_POINTER(2));
+    object_class_property_add(klass, "fi_lower_line_irq_3", "uint32",
+        NULL, fi_change_line_irq_setter,
+        NULL, GINT_TO_POINTER(3));
 }
 
 static const TypeInfo mpic_device_info = {
