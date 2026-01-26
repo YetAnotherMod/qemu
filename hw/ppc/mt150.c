@@ -30,6 +30,7 @@ static void mt150_init(MachineState *machine)
     MT150MachineState *s = MT150_MACHINE(machine);
 
     s->soc = (OI10State *)qdev_new(TYPE_OI10);
+    object_property_add_child(OBJECT(s), "OI10", OBJECT(s->soc));
     qdev_prop_set_uint8(DEVICE(s->soc), "boot-cfg", s->boot_cfg);
     qdev_prop_set_string(DEVICE(s->soc), "firmware", machine->firmware);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(s->soc), &error_fatal);
