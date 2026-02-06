@@ -653,11 +653,6 @@ static void *gr1553b_bc_thread(void *opaque)
                 next_addr = curr_addr + sizeof(bc_trans_desc_t);
             }
 
-            /* update irq only after desc was updated (if it was) */
-            qemu_mutex_lock_iothread();
-            gr1553b_update_irq(s);
-            qemu_mutex_unlock_iothread();
-
             if (s->reg_bc_trans == curr_addr) {
                 s->reg_bc_trans = next_addr;
             }
@@ -670,6 +665,11 @@ static void *gr1553b_bc_thread(void *opaque)
                 executing = false;
             }
             qemu_mutex_unlock(&s->internal_mutex);
+
+            /* update irq only after desc was updated (if it was) */
+            qemu_mutex_lock_iothread();
+            gr1553b_update_irq(s);
+            qemu_mutex_unlock_iothread();
         }
     }
 
