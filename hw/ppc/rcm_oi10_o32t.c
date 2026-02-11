@@ -777,6 +777,17 @@ static void oi10_o32t_boot_cfg_get_and_set(Object *obj, Visitor *v,
     visit_type_uint8(v, name, &s->boot_cfg, errp);
 }
 
+static void oi10_o32t_machine_check_set(Object *obj, Visitor *v,
+                                        const char *name, void *opaque, Error **errp)
+{
+    Oi10O32tState *s = OI10_O32T(obj);
+
+    uint8_t value;
+    visit_type_uint8(v, name, &value, errp);
+
+    qemu_set_irq(qdev_get_gpio_in(DEVICE(s->cpu), PPC40x_INPUT_MCK), value);
+}
+
 static void oi10_o32t_firmware_set(Object *obj, const char *name, Error **errp)
 {
     Oi10O32tState *s = OI10_O32T(obj);
@@ -805,6 +816,9 @@ static void oi10_o32t_class_init(ObjectClass *klass, void *data)
                               oi10_o32t_boot_cfg_get_and_set, NULL, NULL);
     object_class_property_add_str(klass, "firmware", NULL,
                                   oi10_o32t_firmware_set);
+
+    object_class_property_add(klass, "machine_check", "uint8",
+                              NULL, oi10_o32t_machine_check_set, NULL, NULL);
 }
 
 static const TypeInfo oi10_o32t_info = {
