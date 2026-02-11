@@ -397,6 +397,10 @@ static void ppc40x_set_irq(void *opaque, int pin, int level)
             trace_ppc_irq_set_state("debug pin", level);
             ppc_set_irq(cpu, PPC_INTERRUPT_DEBUG, level);
             break;
+        case PPC40x_INPUT_MCK:
+            trace_ppc_irq_set_state("machine check", level);
+            ppc_set_irq(cpu, PPC_INTERRUPT_MCK, level);
+            break;
         default:
             g_assert_not_reached();
         }

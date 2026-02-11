@@ -2587,6 +2587,7 @@ enum {
     PPC40x_INPUT_INT        = 4,
     PPC40x_INPUT_HALT       = 5,
     PPC40x_INPUT_DEBUG      = 6,
+    PPC40x_INPUT_MCK        = 7,
     PPC40x_INPUT_NB,
 };
 
