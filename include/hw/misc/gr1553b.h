@@ -3,8 +3,9 @@
 
 #include "hw/sysbus.h"
 #include "qemu/thread.h"
+#include "net/net.h"
 
-#include <virtmko.h>
+#include <virtmko_logic.h>
 
 struct GR1553BState {
     /*< private >*/
@@ -40,10 +41,13 @@ struct GR1553BState {
     QemuThread bc_thread;
 
     /* virtmko */
-    vmko_controller *vmko_ctrl;
+    vmko_logic_t *vmko_logic;
     QemuMutex bc_recv_wait;
     vmko_msg resp;
     bool resp_valid;
+
+    NICConf nicconf;
+    NICState *vmko_nic;
 };
 
 typedef struct GR1553BState GR1553BState;

@@ -7,6 +7,8 @@
 #include "qemu/atomic.h"
 #include "qapi/error.h"
 #include "hw/irq.h"
+#include "hw/qdev-properties.h"
+#include "hw/qdev-properties-system.h"
 
 #include "exec/address-spaces.h"
 #include "sysemu/dma.h"
@@ -433,7 +435,7 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
             g_assert_not_reached();
         }
 
-        vmko_send(s->vmko_ctrl, &msg);
+        vmko_logic_send(s->vmko_logic, &msg);
 
         if (bc_virtmko_recv_wait(s) == false) {
             desc->result.tfrst = BC_TFRST_RT_NO_REPSONSE;
@@ -444,7 +446,7 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
         break;
 
     case 2:
-        vmko_send(s->vmko_ctrl, &msg);
+        vmko_logic_send(s->vmko_logic, &msg);
 
         if (bc_virtmko_recv_wait(s) == false) {
             desc->result.tfrst = BC_TFRST_RT_NO_REPSONSE;
@@ -799,7 +801,7 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
         break;
     }
 
-    vmko_send(s->vmko_ctrl, msg);
+    vmko_logic_send(s->vmko_logic, msg);
 }
 
 static void bc_action_write(GR1553BState *s, uint32_t val)
@@ -1043,9 +1045,9 @@ static const MemoryRegionOps gr1553b_ops = {
 /*
  * virtmko handlers
  */
-static void vmko_recv_hndl(vmko_controller *ctr, vmko_msg *msg)
+static void gr1553b_vmko_receive_handler(vmko_msg *msg, void *user_data)
 {
-    GR1553BState *s = vmko_get_private_data(ctr);
+    GR1553BState *s = GR1553B(user_data);
 
     /* when locked means BC waits for response */
     if (qemu_mutex_trylock(&s->bc_recv_wait)) {
@@ -1067,6 +1069,33 @@ static void vmko_recv_hndl(vmko_controller *ctr, vmko_msg *msg)
     }
 }
 
+static int gr1553b_vmko_data_to_interface(void *buf, uint32_t length, void *user_data)
+{
+    GR1553BState *s = GR1553B(user_data);
+    if (qemu_send_packet(qemu_get_queue(s->vmko_nic), buf, length) != length) {
+        return -1;
+    }
+    return 0;
+}
+
+/*
+ * netdev handlers
+ */
+static ssize_t gr1553b_net_receive(NetClientState *nc, const uint8_t *buf, size_t len)
+{
+    GR1553BState *s = GR1553B(qemu_get_nic_opaque(nc));
+    if (vmko_logic_data_from_interface(s->vmko_logic, buf, len) == VMKO_L_STATUS_ERROR) {
+        g_assert_not_reached();
+    }
+    return len;
+}
+
+static NetClientInfo net_gr1553b_info = {
+    .type = NET_CLIENT_DRIVER_NIC,
+    .size = sizeof(NICState),
+    .receive = gr1553b_net_receive,
+};
+
 /*
  * device code
  */
@@ -1086,18 +1115,13 @@ static void gr1553b_realize(DeviceState *dev, Error **errp)
     qemu_mutex_lock(&s->bc_recv_wait);
 
     /* virtmko */
-    s->vmko_ctrl = vmko_new();
-    /* TODO: придумать как передавать аргументы для подключения */
-    { /* FIXME: временное решение */
-        static int port = 3800;
-        char ip_port[32];
-        snprintf(ip_port, sizeof(ip_port), "224.5.0.141:%u", port++);
-        printf("mko[%u] ip:port are %s\n", port - 3801, ip_port);
-        vmko_set_ip_port(s->vmko_ctrl, ip_port);
-    }
-    vmko_set_handler(s->vmko_ctrl, vmko_recv_hndl);
-    vmko_set_private_data(s->vmko_ctrl, s);
-    vmko_start_threaded(s->vmko_ctrl);
+    s->vmko_logic =
+        vmko_logic_new(gr1553b_vmko_data_to_interface, gr1553b_vmko_receive_handler, s);
+
+    /* netdev for virtmko */
+    s->vmko_nic = qemu_new_nic(&net_gr1553b_info, &s->nicconf,
+                               object_get_typename(OBJECT(dev)), dev->id,
+                               &dev->mem_reentrancy_guard, s);
 
     /* create locked mutex and recv/send thread for bc mode */
     qemu_mutex_init(&s->bc_mutex);
@@ -1121,6 +1145,11 @@ void gr1553b_change_address_space(GR1553BState *s, AddressSpace *addr_space,
     s->addr_space = addr_space;
 }
 
+static Property gr1553b_properties[] = {
+    DEFINE_PROP_NETDEV("netdev", GR1553BState, nicconf.peers),
+    DEFINE_PROP_END_OF_LIST(),
+};
+
 static void gr1553b_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
@@ -1129,6 +1158,7 @@ static void gr1553b_class_init(ObjectClass *klass, void *data)
     dc->desc = "Aeroflex Gaisler GR1553B Controller";
     dc->realize = gr1553b_realize;
     dc->reset = gr1553b_reset;
+    device_class_set_props(dc, gr1553b_properties);
 }
 
 static const TypeInfo gr1553b_info = {
