@@ -278,8 +278,11 @@ static void add_mko_controllers(Oi10O32tState *s, AddressSpace *addr_space, int 
     char name[8];
 
     for (uint32_t i = 0; i < count; i++) {
-        snprintf(name, sizeof(name), "mko[%u]", i);
+        snprintf(name, sizeof(name), "mko%u", i);
         object_initialize_child(OBJECT(s), name, &s->mko[i], TYPE_GR1553B);
+        if (qemu_find_netdev(name)) {
+            qdev_prop_set_netdev(DEVICE(&s->mko[i]), "netdev", qemu_find_netdev(name));
+        }
         gr1553b_change_address_space(&s->mko[i], addr_space, &error_fatal);
         sysbus_realize(SYS_BUS_DEVICE(&s->mko[i]), &error_fatal);
         SysBusDevice *busdev = SYS_BUS_DEVICE(&s->mko[i]);
