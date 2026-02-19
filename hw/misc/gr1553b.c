@@ -399,16 +399,31 @@ static int get_format(bc_word1_t word1)
 
 static bool bc_virtmko_recv_wait(GR1553BState *s)
 {
-    // TODO: use qemu_sem_timedwait
-    qemu_sem_wait(&s->bc_recv_queue_sem);
+    // FIXME: replace 500 (0.5 sec) with define or device property
+    if (qemu_sem_timedwait(&s->bc_recv_queue_sem, 500) == -1) {
+        return false;
+    }
 
     qemu_mutex_lock(&s->bc_recv_queue_mutex);
     void *msg = g_queue_pop_head(&s->bc_recv_queue);
     qemu_mutex_unlock(&s->bc_recv_queue_mutex);
 
     memcpy(&s->resp, msg, sizeof(vmko_msg));
+    g_free(msg);
 
     return true;
+}
+
+static void bc_virtmko_clear_queue(GR1553BState *s)
+{
+    qemu_sem_init(&s->bc_recv_queue_sem, 0);
+
+    qemu_mutex_lock(&s->bc_recv_queue_mutex);
+    while (!g_queue_is_empty(&s->bc_recv_queue)) {
+        void *data = g_queue_pop_head(&s->bc_recv_queue);
+        g_free(data);
+    }
+    qemu_mutex_unlock(&s->bc_recv_queue_mutex);
 }
 
 static uint32_t virtmko_rt_result_to_gr1553(uint16_t response)
@@ -436,6 +451,8 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
     msg.format = get_format(desc->word1);
     msg.line = desc->word1.bus ? MSG_LINE_B : MSG_LINE_A;
     msg.word_type = WORD_TYPE_CMD;
+
+    bc_virtmko_clear_queue(s);
 
     uint32_t nwords = msg.nwords ? msg.nwords : MKO_MAX_WORDS;
     switch (msg.format) {
