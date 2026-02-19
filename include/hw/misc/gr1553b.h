@@ -42,7 +42,9 @@ struct GR1553BState {
 
     /* virtmko */
     vmko_logic_t *vmko_logic;
-    QemuMutex bc_recv_wait;
+    GQueue bc_recv_queue;
+    QemuMutex bc_recv_queue_mutex;
+    QemuSemaphore bc_recv_queue_sem;
     vmko_msg resp;
     bool resp_valid;
 

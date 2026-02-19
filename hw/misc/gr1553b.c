@@ -399,32 +399,60 @@ static int get_format(bc_word1_t word1)
 
 static bool bc_virtmko_recv_wait(GR1553BState *s)
 {
-    qemu_mutex_lock(&s->bc_recv_wait);
-    return s->resp_valid;
+    // FIXME: replace 500 (0.5 sec) with define or device property
+    if (qemu_sem_timedwait(&s->bc_recv_queue_sem, 500) == -1) {
+        return false;
+    }
+
+    qemu_mutex_lock(&s->bc_recv_queue_mutex);
+    void *msg = g_queue_pop_head(&s->bc_recv_queue);
+    qemu_mutex_unlock(&s->bc_recv_queue_mutex);
+
+    memcpy(&s->resp, msg, sizeof(vmko_msg));
+    g_free(msg);
+
+    return true;
 }
 
-static uint32_t virtmko_rt_result_to_gr1553(vmko_msg *msg)
+static void bc_virtmko_clear_queue(GR1553BState *s)
 {
+    qemu_sem_init(&s->bc_recv_queue_sem, 0);
+
+    qemu_mutex_lock(&s->bc_recv_queue_mutex);
+    while (!g_queue_is_empty(&s->bc_recv_queue)) {
+        void *data = g_queue_pop_head(&s->bc_recv_queue);
+        g_free(data);
+    }
+    qemu_mutex_unlock(&s->bc_recv_queue_mutex);
+}
+
+static uint32_t virtmko_rt_result_to_gr1553(uint16_t response)
+{
+    vmko_word mko_word = { .word = response };
     uint32_t rtst = 0;
-    rtst |= msg->rt_fault ? BC_DESC_RTST_TERMINAL_FLAG : 0;
-    rtst |= msg->control_accept ? BC_DESC_RTST_BUS_ACCPET : 0;
-    rtst |= msg->sub_fault ? BC_DESC_RTST_SUBSYSTEM_FLAG : 0;
-    rtst |= msg->busy ? BC_DESC_RTST_BUSY : 0;
-    rtst |= msg->group ? BC_DESC_RTST_BROADCAST : 0;
-    rtst |= msg->request ? BC_DESC_RTST_SERVICE_REQUEST : 0;
-    rtst |= msg->sw_transmit ? BC_DESC_RTST_INSTRUMENTATION : 0;
-    rtst |= msg->msg_error ? BC_DESC_RTST_MSG_ERROR : 0;
+    rtst |= mko_word.rt_fault ? BC_DESC_RTST_TERMINAL_FLAG : 0;
+    rtst |= mko_word.control_accept ? BC_DESC_RTST_BUS_ACCPET : 0;
+    rtst |= mko_word.sub_fault ? BC_DESC_RTST_SUBSYSTEM_FLAG : 0;
+    rtst |= mko_word.busy ? BC_DESC_RTST_BUSY : 0;
+    rtst |= mko_word.group ? BC_DESC_RTST_BROADCAST : 0;
+    rtst |= mko_word.request ? BC_DESC_RTST_SERVICE_REQUEST : 0;
+    rtst |= mko_word.sw_transmit ? BC_DESC_RTST_INSTRUMENTATION : 0;
+    rtst |= mko_word.msg_error ? BC_DESC_RTST_MSG_ERROR : 0;
     return rtst;
 }
 
 static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
 {
-    vmko_msg msg;
+    vmko_msg msg = {0};
     msg.nwords = desc->word1.wcmc;
     msg.subaddr = desc->word1.rtsa1;
     msg.transmit = desc->word1.tr;
     msg.addr = desc->word1.rtad1;
     msg.format = get_format(desc->word1);
+    msg.line = desc->word1.bus ? MSG_LINE_B : MSG_LINE_A;
+    msg.word_type = WORD_TYPE_CMD;
+
+    bc_virtmko_clear_queue(s);
 
     uint32_t nwords = msg.nwords ? msg.nwords : MKO_MAX_WORDS;
     switch (msg.format) {
@@ -442,7 +470,7 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
             return;
         }
 
-        desc->result.rtst = virtmko_rt_result_to_gr1553(&s->resp);
+        desc->result.rtst = virtmko_rt_result_to_gr1553(s->resp.word);
         break;
 
     case 2:
@@ -459,7 +487,121 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
             g_assert_not_reached();
         }
 
-        desc->result.rtst = virtmko_rt_result_to_gr1553(&s->resp);
+        desc->result.rtst = virtmko_rt_result_to_gr1553(s->resp.word);
+        break;
+
+    case 3:
+        msg.rt2.nwords = desc->word1.wcmc;
+        msg.rt2.subaddr = desc->word1.rtsa2;
+        msg.rt2.transmit = 1;
+        msg.rt2.addr = desc->word1.rtad2;
+
+        vmko_logic_send(s->vmko_logic, &msg);
+
+        if (bc_virtmko_recv_wait(s) == false) {
+            desc->result.tfrst = BC_TFRST_RT_NO_REPSONSE;
+            return;
+        }
+
+        /* virtmko uses rt2 as transmitter RT */
+        desc->result.rtst = virtmko_rt_result_to_gr1553(s->resp.rt2.word);
+
+        if (bc_virtmko_recv_wait(s) == false) {
+            desc->result.tfrst = BC_TFRST_SECOND_RT_NO_REPSONSE;
+            return;
+        }
+
+        /* virtmko uses main word as receiving RT */
+        desc->result.rt2st = virtmko_rt_result_to_gr1553(s->resp.word);
+        break;
+
+    case 4:
+        vmko_logic_send(s->vmko_logic, &msg);
+
+        if (bc_virtmko_recv_wait(s) == false) {
+            desc->result.tfrst = BC_TFRST_RT_NO_REPSONSE;
+            return;
+        }
+
+        desc->result.rtst = virtmko_rt_result_to_gr1553(s->resp.word);
+        break;
+
+    case 5:
+        vmko_logic_send(s->vmko_logic, &msg);
+
+        if (bc_virtmko_recv_wait(s) == false) {
+            desc->result.tfrst = BC_TFRST_RT_NO_REPSONSE;
+            return;
+        }
+
+        if (copy_half_words(s->addr_space, desc->addr, s->resp.data, 1,
+                            DMA_DIRECTION_TO_DEVICE)) {
+            /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
+            g_assert_not_reached();
+        }
+
+        desc->result.rtst = virtmko_rt_result_to_gr1553(s->resp.word);
+        break;
+
+    case 6:
+        if (copy_half_words(s->addr_space, desc->addr, msg.data, 1,
+                            DMA_DIRECTION_FROM_DEVICE)) {
+            /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
+            g_assert_not_reached();
+        }
+
+        vmko_logic_send(s->vmko_logic, &msg);
+
+        if (bc_virtmko_recv_wait(s) == false) {
+            desc->result.tfrst = BC_TFRST_RT_NO_REPSONSE;
+            return;
+        }
+
+        desc->result.rtst = virtmko_rt_result_to_gr1553(s->resp.word);
+        break;
+
+    case 7:
+        if (copy_half_words(s->addr_space, desc->addr, msg.data, nwords,
+                            DMA_DIRECTION_FROM_DEVICE)) {
+            /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
+            g_assert_not_reached();
+        }
+
+        vmko_logic_send(s->vmko_logic, &msg);
+        desc->result.rtst = 0;
+        break;
+
+    case 8:
+        msg.rt2.nwords = desc->word1.wcmc;
+        msg.rt2.subaddr = desc->word1.rtsa2;
+        msg.rt2.transmit = 1;
+        msg.rt2.addr = desc->word1.rtad2;
+
+        vmko_logic_send(s->vmko_logic, &msg);
+
+        if (bc_virtmko_recv_wait(s) == false) {
+            desc->result.tfrst = BC_TFRST_RT_NO_REPSONSE;
+            return;
+        }
+
+        /* virtmko uses rt2 as transmitter RT */
+        desc->result.rtst = virtmko_rt_result_to_gr1553(s->resp.rt2.word);
+        break;
+
+    case 9:
+        vmko_logic_send(s->vmko_logic, &msg);
+        desc->result.rtst = 0;
+        break;
+
+    case 10:
+        if (copy_half_words(s->addr_space, desc->addr, msg.data, 1,
+                            DMA_DIRECTION_FROM_DEVICE)) {
+            /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
+            g_assert_not_reached();
+        }
+
+        vmko_logic_send(s->vmko_logic, &msg);
+        desc->result.rtst = 0;
         break;
 
     default:
@@ -653,11 +795,6 @@ static void *gr1553b_bc_thread(void *opaque)
                 next_addr = curr_addr + sizeof(bc_trans_desc_t);
             }
 
-            /* update irq only after desc was updated (if it was) */
-            qemu_mutex_lock_iothread();
-            gr1553b_update_irq(s);
-            qemu_mutex_unlock_iothread();
-
             if (s->reg_bc_trans == curr_addr) {
                 s->reg_bc_trans = next_addr;
             }
@@ -670,6 +807,11 @@ static void *gr1553b_bc_thread(void *opaque)
                 executing = false;
             }
             qemu_mutex_unlock(&s->internal_mutex);
+
+            /* update irq only after desc was updated (if it was) */
+            qemu_mutex_lock_iothread();
+            gr1553b_update_irq(s);
+            qemu_mutex_unlock_iothread();
         }
     }
 
@@ -1049,19 +1191,21 @@ static void gr1553b_vmko_receive_handler(vmko_msg *msg, void *user_data)
 {
     GR1553BState *s = GR1553B(user_data);
 
-    /* when locked means BC waits for response */
-    if (qemu_mutex_trylock(&s->bc_recv_wait)) {
+    /* TODO: check for async too */
+    if (s->bc_scst == BC_SCHED_EXECUTING) {
         s->resp_valid = (msg != NULL);
 
         if (msg) {
-            memcpy(&s->resp, msg, sizeof(vmko_msg));
-        }
+            void *nmsg = g_malloc(sizeof(vmko_msg));
+            memcpy(nmsg, msg, sizeof(vmko_msg));
 
-        qemu_mutex_unlock(&s->bc_recv_wait);
+            qemu_mutex_lock(&s->bc_recv_queue_mutex);
+            g_queue_push_tail(&s->bc_recv_queue, nmsg);
+            qemu_mutex_unlock(&s->bc_recv_queue_mutex);
+            qemu_sem_post(&s->bc_recv_queue_sem);
+        }
         return;
     }
-
-    qemu_mutex_unlock(&s->bc_recv_wait);
 
     /* if RT is enabled and BC is not */
     if (msg && s->rt_enabled) {
@@ -1110,9 +1254,9 @@ static void gr1553b_realize(DeviceState *dev, Error **errp)
 
     /* internal */
     qemu_mutex_init(&s->internal_mutex);
-    qemu_mutex_init(&s->bc_recv_wait);
-    /* initial state should be locked */
-    qemu_mutex_lock(&s->bc_recv_wait);
+    qemu_mutex_init(&s->bc_recv_queue_mutex);
+    qemu_sem_init(&s->bc_recv_queue_sem, 0);
+    g_queue_init(&s->bc_recv_queue);
 
     /* virtmko */
     s->vmko_logic =
