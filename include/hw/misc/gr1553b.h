@@ -46,7 +46,6 @@ struct GR1553BState {
     QemuMutex bc_recv_queue_mutex;
     QemuSemaphore bc_recv_queue_sem;
     vmko_msg resp;
-    bool resp_valid;
 
     NICConf nicconf;
     NICState *vmko_nic;

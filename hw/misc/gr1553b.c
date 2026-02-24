@@ -1193,8 +1193,6 @@ static void gr1553b_vmko_receive_handler(vmko_msg *msg, void *user_data)
 
     /* TODO: check for async too */
     if (s->bc_scst == BC_SCHED_EXECUTING) {
-        s->resp_valid = (msg != NULL);
-
         if (msg) {
             void *nmsg = g_malloc(sizeof(vmko_msg));
             memcpy(nmsg, msg, sizeof(vmko_msg));
