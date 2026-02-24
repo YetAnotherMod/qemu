@@ -498,21 +498,30 @@ static void bc_send_msg(GR1553BState *s, bc_trans_desc_t *desc)
 
         vmko_logic_send(s->vmko_logic, &msg);
 
-        if (bc_virtmko_recv_wait(s) == false) {
-            desc->result.tfrst = BC_TFRST_RT_NO_REPSONSE;
-            return;
+        /* vmko uses multicast udp as transport but it does not guarantee ordering
+         * so we wait for two messages and parse it `type` to get response
+         * FIXME: maybe wait more then 2 messages coz of duplication?
+         */
+        bool got_transmit_rt_resp = false;
+        for (int i = 0; i < 2; i++) {
+            if (bc_virtmko_recv_wait(s) == false) {
+                desc->result.tfrst = got_transmit_rt_resp ?
+                                     BC_TFRST_SECOND_RT_NO_REPSONSE :
+                                     BC_TFRST_RT_NO_REPSONSE;
+                return;
+            }
+
+            if (s->resp.word_type == WORD_TYPE_RESP) {
+                /* virtmko uses rt2 as transmitter RT */
+                desc->result.rtst = virtmko_rt_result_to_gr1553(s->resp.rt2.word);
+                got_transmit_rt_resp = true;
+            } else if (s->resp.word_type == WORD_TYPE_RESP_RESP) {
+                /* virtmko uses main word as receiving RT */
+                desc->result.rt2st = virtmko_rt_result_to_gr1553(s->resp.word);
+            } else {
+                g_assert_not_reached();
+            }
         }
-
-        /* virtmko uses rt2 as transmitter RT */
-        desc->result.rtst = virtmko_rt_result_to_gr1553(s->resp.rt2.word);
-
-        if (bc_virtmko_recv_wait(s) == false) {
-            desc->result.tfrst = BC_TFRST_SECOND_RT_NO_REPSONSE;
-            return;
-        }
-
-        /* virtmko uses main word as receiving RT */
-        desc->result.rt2st = virtmko_rt_result_to_gr1553(s->resp.word);
         break;
 
     case 4:
