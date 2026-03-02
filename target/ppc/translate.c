@@ -6029,6 +6029,22 @@ static void gen_tlbsx_476(DisasContext *ctx)
 #endif /* defined(CONFIG_USER_ONLY) */
 }
 
+/* tlbivax */
+static void gen_tlbivax_476(DisasContext *ctx)
+{
+#if defined(CONFIG_USER_ONLY)
+    GEN_PRIV(ctx);
+#else
+    TCGv t0;
+
+    CHK_SV(ctx);
+
+    t0 = tcg_temp_new();
+    gen_addr_reg_index(ctx, t0);
+    gen_helper_476_tlbivax(tcg_env, t0);
+#endif /* defined(CONFIG_USER_ONLY) */
+}
+
 /* TLB management - PowerPC BookE 2.06 implementation */
 
 /* tlbre */
@@ -6791,6 +6807,8 @@ GEN_HANDLER2_E(tlbilx_booke206, "tlbilx", 0x1F, 0x12, 0x00, 0x03800001,
 GEN_HANDLER2_E(tlbre_476, "tlbre", 0x1F, 0x12, 0x1D, 0x00000001, PPC_NONE, PPC2_476_TLB),
 GEN_HANDLER2_E(tlbsx_476, "tlbsx", 0x1F, 0x12, 0x1C, 0x00000000, PPC_NONE, PPC2_476_TLB),
 GEN_HANDLER2_E(tlbwe_476, "tlbwe", 0x1F, 0x12, 0x1E, 0x00000001, PPC_NONE, PPC2_476_TLB),
+GEN_HANDLER2_E(tlbivax_476, "tlbivax", 0x1F, 0x12, 0x18, 0x00000001,
+               PPC_NONE, PPC2_476_TLB),
 GEN_HANDLER(wrtee, 0x1F, 0x03, 0x04, 0x000FFC01, PPC_WRTEE),
 GEN_HANDLER(wrteei, 0x1F, 0x03, 0x05, 0x000E7C01, PPC_WRTEE),
 GEN_HANDLER(dlmzb, 0x1F, 0x0E, 0x02, 0x00000000, PPC_440_SPEC),

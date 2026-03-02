@@ -1519,6 +1519,32 @@ target_ulong helper_476_tlbsx(CPUPPCState *env, target_ulong address)
     return result;
 }
 
+void helper_476_tlbivax(CPUPPCState *env, target_ulong address)
+{
+    uint32_t pid = env->spr[SPR_440_MMUCR] & PPC476_MMUCR_STID_MASK;
+    uint32_t ts = env->spr[SPR_440_MMUCR] & PPC476_MMUCR_TS_MASK ? PPC476_TLB_TS : 0;
+    uint32_t search_priority = env->spr[SPR_ISPCR] & PPC476_ISPCR_MASK;
+
+    target_ulong entry = ppc476_tlb_search(env, address, search_priority, pid, ts);
+
+    ppcemb_tlb_t *tlb = &env->tlb.tlbe[entry];
+
+    // skip invalidation if this entry is bolted
+    if (tlb->attr & PPC476_TLB_BOLTED_ENTRY) {
+        return;
+    }
+
+    tlb->prot &= ~PAGE_VALID;
+
+    uint32_t way;
+    target_ulong index = get_476_tlb_index_and_way(entry, env->tlb_per_way, &way);
+
+    // we just invalidated an entry so this way is free for next entry
+    env->tlb_way_selection[index] = way;
+
+    tlb_flush(env_cpu(env));
+}
+
 void helper_476_shadow_tlb_flush(CPUPPCState *env)
 {
     env->curr_d_shadow_tlb = 0;
