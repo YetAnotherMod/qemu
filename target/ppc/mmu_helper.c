@@ -1026,6 +1026,9 @@ target_ulong helper_440_tlbsx(CPUPPCState *env, target_ulong address)
 #define PPC476_SPCR_ORDER_PID_MASK      0x8
 #define PPC476_SPCR_ORDER_SIZE_BITS     4
 
+/* In ISPCR register PID bit in order are always 0 */
+#define PPC476_ISPCR_MASK 0x77777770u
+
 /* Total number of bolted entries */
 #define PPC476_BOLTED_ENTRY_COUNT       6
 
@@ -1210,6 +1213,20 @@ static inline uint8_t calc_476_page_size_to_order_code(uint32_t size)
     case  16 * MiB: return 5;
     case 256 * MiB: return 6;
     case   1 * GiB: return 7;
+    default: assert(0); break;
+    }
+}
+
+static uint32_t calc_476_spcr_order_to_page_size(uint32_t order)
+{
+    switch (order) {
+    case 1: return   4 * KiB;
+    case 2: return  16 * KiB;
+    case 3: return  64 * KiB;
+    case 4: return   1 * MiB;
+    case 5: return  16 * MiB;
+    case 6: return 256 * MiB;
+    case 7: return   1 * GiB;
     default: assert(0); break;
     }
 }
@@ -1426,13 +1443,14 @@ target_ulong helper_476_tlbre(CPUPPCState *env, uint32_t word,
 
 static inline int ppc476_tlb_search_all_ways(CPUPPCState *env, target_ulong address,
                                              uint32_t entry_index, uint32_t pid,
-                                             uint32_t ts)
+                                             uint32_t ts, uint32_t order_code)
 {
     for (uint32_t way = 0; way < env->nb_ways; way++) {
         int tlb_index = calc_476_tlb_entry(entry_index, way, env->tlb_per_way);
 
         ppcemb_tlb_t *tlb = &env->tlb.tlbe[tlb_index];
-        if (ppc476_tlb_page_check(env, tlb, address, pid, ts) == 0) {
+        if (ppc476_tlb_page_check(env, tlb, address, pid, ts) == 0 &&
+            tlb->size == calc_476_spcr_order_to_page_size(order_code)) {
             return tlb_index;
         }
     }
@@ -1465,7 +1483,8 @@ int ppc476_tlb_search(CPUPPCState *env, target_ulong address, uint32_t search_pr
         if (check_zero_pid) {
             entry_index = calc_476_tlb_entry_index(address, 0, order_code);
 
-            tlb_entry = ppc476_tlb_search_all_ways(env, address, entry_index, 0, ts);
+            tlb_entry = ppc476_tlb_search_all_ways(env, address, entry_index, 0, ts,
+                                                   order_code);
             if (tlb_entry != -1) {
                 return tlb_entry;
             }
@@ -1473,7 +1492,8 @@ int ppc476_tlb_search(CPUPPCState *env, target_ulong address, uint32_t search_pr
 
         entry_index = calc_476_tlb_entry_index(address, pid, order_code);
 
-        tlb_entry = ppc476_tlb_search_all_ways(env, address, entry_index, pid, ts);
+        tlb_entry = ppc476_tlb_search_all_ways(env, address, entry_index, pid, ts,
+                                               order_code);
         if (tlb_entry != -1) {
             return tlb_entry;
         }
@@ -1486,7 +1506,7 @@ target_ulong helper_476_tlbsx(CPUPPCState *env, target_ulong address)
 {
     uint32_t pid = env->spr[SPR_440_MMUCR] & PPC476_MMUCR_STID_MASK;
     uint32_t ts = env->spr[SPR_440_MMUCR] & PPC476_MMUCR_TS_MASK ? PPC476_TLB_TS : 0;
-    uint32_t search_priority = env->spr[SPR_ISPCR];
+    uint32_t search_priority = env->spr[SPR_ISPCR] & PPC476_ISPCR_MASK;
 
     target_ulong entry = ppc476_tlb_search(env, address, search_priority, pid, ts);
 
