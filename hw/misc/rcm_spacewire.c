@@ -587,8 +587,17 @@ static void rcm_sw_chardev_receive(void *opaque, const uint8_t *data_char, int s
 static void rcm_sw_chardev_event(void* opaque, QEMUChrEvent evt) {
     RCMSpaceWireState *s = RCM_SPACEWIRE(opaque);
 
-    if (evt == CHR_EVENT_OPENED) {
+    switch (evt) {
+    case CHR_EVENT_OPENED:
         sw_logic_interface_connected(s->sw_logic);
+        break;
+
+    case CHR_EVENT_CLOSED:
+        sw_logic_interface_disconnected(s->sw_logic);
+        break;
+
+    default:
+        break;
     }
 }
 
