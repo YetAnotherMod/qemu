@@ -1527,6 +1527,10 @@ void helper_476_tlbivax(CPUPPCState *env, target_ulong address)
 
     target_ulong entry = ppc476_tlb_search(env, address, search_priority, pid, ts);
 
+    if (entry == (target_ulong)-1) {
+        return;
+    }
+
     ppcemb_tlb_t *tlb = &env->tlb.tlbe[entry];
 
     // skip invalidation if this entry is bolted
