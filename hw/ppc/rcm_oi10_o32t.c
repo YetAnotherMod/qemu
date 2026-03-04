@@ -15,6 +15,7 @@
 #include "hw/net/greth.h"
 #include "net/eth.h"
 #include "hw/misc/commport.h"
+#include "hw/ssi/pl022.h"
 
 #ifdef CONFIG_VIRTSW
 #include "hw/misc/rcm_spacewire.h"
@@ -46,6 +47,7 @@ struct Oi10O32tClass {
 #define MKO_COUNT_O32T 4
 #define MKO_COUNT_MAX MKO_COUNT_O32T
 #define COMM_COUNT 2
+#define SPI_COUNT 2
 
 struct Oi10O32tState {
     /*< private >*/
@@ -64,6 +66,7 @@ struct Oi10O32tState {
     DeviceState *gpio[GPIO_COUNT];
     GRETHState greth[GRETH_COUNT];
     KeyasicSdState sdio;
+    PL022State spi[SPI_COUNT];
 
 #ifdef CONFIG_VIRTSW
     RCMSpaceWireState sw[SW_COUNT];
@@ -604,9 +607,11 @@ static void oi10_o32t_realize(DeviceState *dev, Error **errp)
                                 sysbus_mmio_get_region(busdev, 0));
     sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 52));
 
-    MemoryRegion *spi0 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(spi0, NULL, "spi0", 4 * KiB, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c002b000, spi0);
+    object_initialize_child(OBJECT(s), "spi0", &s->spi[0], TYPE_PL022);
+    sysbus_realize(SYS_BUS_DEVICE(&s->spi[0]), &error_fatal);
+    busdev = SYS_BUS_DEVICE(&s->spi[0]);
+    memory_region_add_subregion(get_system_memory(), 0x20c002b000,
+                                sysbus_mmio_get_region(busdev, 0));
 
     object_initialize_child(OBJECT(s), "sdio", &s->sdio, TYPE_KEYASIC_SD);
     keyasic_sd_change_address_space(&s->sdio, axi_addr_space, &error_fatal);
@@ -648,9 +653,11 @@ static void oi10_o32t_realize(DeviceState *dev, Error **errp)
                                 sysbus_mmio_get_region(busdev, 0));
     sysbus_connect_irq(busdev, 0, qdev_get_gpio_in(DEVICE(&s->mpic), 53));
 
-    MemoryRegion *spi1 = g_new(MemoryRegion, 1);
-    memory_region_init_ram(spi1, NULL, "spi1", 4 * KiB, &error_fatal);
-    memory_region_add_subregion(get_system_memory(), 0x20c003b000, spi1);
+    object_initialize_child(OBJECT(s), "spi1", &s->spi[1], TYPE_PL022);
+    sysbus_realize(SYS_BUS_DEVICE(&s->spi[1]), &error_fatal);
+    busdev = SYS_BUS_DEVICE(&s->spi[1]);
+    memory_region_add_subregion(get_system_memory(), 0x20c003b000,
+                                sysbus_mmio_get_region(busdev, 0));
 
     MemoryRegion *sdio1 = g_new(MemoryRegion, 1);
     memory_region_init_ram(sdio1, NULL, "sdio1", 4 * KiB, &error_fatal);
@@ -769,6 +776,13 @@ BusState *oi10_o32t_get_sdio_bus(DeviceState *dev, int sdio_num)
     Oi10O32tState *s = OI10_O32T(dev);
     g_assert(sdio_num == 0);
     return qdev_get_child_bus(DEVICE(&s->sdio), "sd-bus");
+}
+
+BusState *oi10_o32t_get_spi_bus(DeviceState *dev, int spi_num)
+{
+    Oi10O32tState *s = OI10_O32T(dev);
+    g_assert(spi_num < SPI_COUNT);
+    return qdev_get_child_bus(DEVICE(&s->spi[spi_num]), "ssi");
 }
 
 static void oi10_o32t_boot_cfg_get_and_set(Object *obj, Visitor *v,

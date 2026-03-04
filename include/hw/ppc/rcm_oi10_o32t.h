@@ -17,5 +17,6 @@ OBJECT_DECLARE_SIMPLE_TYPE(O32TState, O32T)
 
 MemoryRegion *oi10_o32t_get_ext_mem_region(DeviceState *dev);
 BusState *oi10_o32t_get_sdio_bus(DeviceState *dev, int sdio_num);
+BusState *oi10_o32t_get_spi_bus(DeviceState *dev, int spi_num);
 
 #endif /* RCM_OI10_H */
