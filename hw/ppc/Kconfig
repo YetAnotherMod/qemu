@@ -204,3 +204,8 @@ config MT150
     default y
     select PFLASH_CFI02
     select OI10_O32T
+
+config MK19404
+    bool
+    default y
+    select OI10_O32T

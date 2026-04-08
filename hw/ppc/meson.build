@@ -95,5 +95,6 @@ ppc_ss.add(when: 'CONFIG_OI10_O32T', if_true: files('rcm_oi10_o32t.c', 'dcr_mpic
 ppc_ss.add(when: 'CONFIG_MM7705', if_true: files('mm7705.c', 'dcr_mpic.c'))
 ppc_ss.add(when: 'CONFIG_MT174', if_true: files('mt174.c'))
 ppc_ss.add(when: 'CONFIG_MT150', if_true: files('mt150.c'))
+ppc_ss.add(when: 'CONFIG_MK19404', if_true: files('mk19404.c'))
 
 hw_arch += {'ppc': ppc_ss}
