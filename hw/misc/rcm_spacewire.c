@@ -15,6 +15,7 @@
 #define SW_REG_RESET 0x8
 #define SW_REG_SETTINGS 0xc
 #define SW_REG_STATUS 0x10
+#define SW_REG_IRQ_MASK 0x14
 #define SW_REG_ADMA_RESET 0x808
 #define SW_REG_ADMA_CH_STATUS 0x80c
 
@@ -38,6 +39,11 @@
 #define SW_SETTINGS_MASK \
     (SW_SETTINGS_ENABLE | SW_SETTINGS_TX_ENDIAN | SW_SETTINGS_RX_ENDIAN | \
      SW_SETTINGS_LOOPBACK)
+
+#define SW_STATUS_DISCONNECT (1u << 0)
+#define SW_STATUS_ACTIVE_LINK (1u << 9)
+#define SW_STATUS_MASK \
+    (SW_STATUS_DISCONNECT | SW_STATUS_ACTIVE_LINK)
 
 #define SW_ADMA_CH_STATUS_RDMA_IRQ (1u << 0)
 #define SW_ADMA_CH_STATUS_WDMA_IRQ (1u << 16)
@@ -100,8 +106,12 @@ static int write_dma_desc(RCMSpaceWireState *s, dma_addr_t addr, sw_dma_desc_t *
  */
 static void rcm_sw_update_irq(RCMSpaceWireState *s)
 {
-    // TODO: add core_irq functionality
-    qemu_irq_lower(s->core_irq);
+    uint32_t irq = qatomic_read(&s->status) & s->irq_mask & SW_STATUS_MASK;
+    if (irq) {
+        qemu_irq_raise(s->core_irq);
+    } else {
+        qemu_irq_lower(s->core_irq);
+    }
 
     uint32_t rdma_irq = qatomic_read(&s->rdma_status) &
                         qatomic_read(&s->rdma_settings) &
@@ -122,6 +132,8 @@ static void rcm_sw_soft_reset(RCMSpaceWireState *s)
     s->settings = 0;
     qatomic_set(&s->rdma_settings, 0);
     qatomic_set(&s->wdma_settings, 0);
+    qatomic_set(&s->status, 0);
+    s->irq_mask = 0;
     qatomic_set(&s->rdma_status, 0);
     qatomic_set(&s->wdma_status, 0);
     s->rdma_sys_addr = 0;
@@ -285,6 +297,15 @@ static uint64_t rcm_sw_read(void *opaque, hwaddr offset, unsigned size)
         val = s->settings;
         break;
 
+    case SW_REG_STATUS:
+        val = qatomic_xchg(&s->status, 0);
+        rcm_sw_update_irq(s);
+        break;
+
+    case SW_REG_IRQ_MASK:
+        val = s->irq_mask;
+        break;
+
     case SW_REG_ADMA_CH_STATUS: {
         uint32_t rdma_irq = qatomic_read(&s->rdma_status) &
                             qatomic_read(&s->rdma_settings) &
@@ -369,6 +390,11 @@ static void rcm_sw_write(void *opaque, hwaddr offset, uint64_t val, unsigned siz
         }
         qemu_mutex_unlock(&s->rdma_mutex);
         qemu_mutex_unlock(&s->wdma_mutex);
+        break;
+
+    case SW_REG_IRQ_MASK:
+        s->irq_mask = val;
+        rcm_sw_update_irq(s);
         break;
 
     case SW_REG_RDMA_SETTINGS:
@@ -590,10 +616,14 @@ static void rcm_sw_chardev_event(void* opaque, QEMUChrEvent evt) {
     switch (evt) {
     case CHR_EVENT_OPENED:
         sw_logic_interface_connected(s->sw_logic);
+        qatomic_or(&s->status, SW_STATUS_ACTIVE_LINK);
+        rcm_sw_update_irq(s);
         break;
 
     case CHR_EVENT_CLOSED:
         sw_logic_interface_disconnected(s->sw_logic);
+        qatomic_or(&s->status, SW_STATUS_DISCONNECT);
+        rcm_sw_update_irq(s);
         break;
 
     default:
