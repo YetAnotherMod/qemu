@@ -52,9 +52,10 @@
 #define SW_RWDMA_SETTINGS_ENABLE (1u << 28)
 #define SW_RWDMA_SETTINGS_DESC_TBL (1u << 29)
 #define SW_RWDMA_SETTINGS_LONG_LEN (1u << 30)
+#define SW_RWDMA_SETTINGS_CANCEL (1u << 31)
 #define SW_RWDMA_SETTINGS_MASK \
     (SW_RWDMA_SETTINGS_DESC_INT | SW_RWDMA_SETTINGS_ENABLE | \
-     SW_RWDMA_SETTINGS_DESC_TBL | SW_RWDMA_SETTINGS_LONG_LEN)
+     SW_RWDMA_SETTINGS_DESC_TBL | SW_RWDMA_SETTINGS_LONG_LEN | SW_RWDMA_SETTINGS_CANCEL)
 
 #define SW_DESC_ACTIVITY_TRAN 0x2
 #define SW_DESC_ACTIVITY_COMPL 0x1
@@ -274,6 +275,15 @@ _stop_rdma:
     qatomic_set(&s->rdma_active, false);
 }
 
+static void rcm_sw_free_func(void *data, void *user_data)
+{
+    sw_data *swdata = data;
+    RCMSpaceWireState *s = user_data;
+
+    dma_memory_unmap(s->addr_space, swdata->data, s->rdma_len,
+                     DMA_DIRECTION_FROM_DEVICE, swdata->size);
+}
+
 static uint64_t rcm_sw_read(void *opaque, hwaddr offset, unsigned size)
 {
     RCMSpaceWireState *s = RCM_SPACEWIRE(opaque);
@@ -401,11 +411,18 @@ static void rcm_sw_write(void *opaque, hwaddr offset, uint64_t val, unsigned siz
         qemu_mutex_lock(&s->rdma_mutex);
         qatomic_or(&s->rdma_settings, SW_RWDMA_SETTINGS_MASK);
 
+        g_assert(!(val & SW_RWDMA_SETTINGS_ENABLE && val & SW_RWDMA_SETTINGS_CANCEL));
+
         if (val & SW_RWDMA_SETTINGS_ENABLE) {
             /* start dma only when it was stopped */
             if (qatomic_xchg(&s->rdma_active, true) == false) {
                 rcm_sw_rdma_send(s);
             }
+        } else if (val & SW_RWDMA_SETTINGS_CANCEL) {
+            sw_logic_clear_write_queue(s->sw_logic, rcm_sw_free_func);
+            qatomic_and(&s->rdma_settings,
+                        ~(SW_RWDMA_SETTINGS_ENABLE | SW_RWDMA_SETTINGS_CANCEL));
+            qatomic_set(&s->rdma_active, false);
         }
         qemu_mutex_unlock(&s->rdma_mutex);
         break;
@@ -413,6 +430,8 @@ static void rcm_sw_write(void *opaque, hwaddr offset, uint64_t val, unsigned siz
     case SW_REG_WDMA_SETTINGS:
         qemu_mutex_lock(&s->wdma_mutex);
         qatomic_or(&s->wdma_settings, SW_RWDMA_SETTINGS_MASK);
+
+        g_assert(!(val & SW_RWDMA_SETTINGS_CANCEL));
 
         if (val & SW_RWDMA_SETTINGS_ENABLE) {
             /* start dma only when it was stopped */
