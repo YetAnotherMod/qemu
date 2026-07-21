@@ -711,7 +711,7 @@ static const MemoryRegionOps pflash_cfi02_ops = {
     .write = pflash_write,
     .valid.min_access_size = 1,
     .valid.max_access_size = 4,
-    .endianness = DEVICE_NATIVE_ENDIAN,
+    .endianness = DEVICE_LITTLE_ENDIAN,
 };
 
 static void pflash_cfi02_fill_cfi_table(PFlashCFI02 *pfl, int nb_regions)
