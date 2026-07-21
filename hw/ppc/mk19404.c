@@ -36,6 +36,38 @@ static void mk19404_init(MachineState *machine)
     qdev_prop_set_string(DEVICE(s->soc), "firmware", machine->firmware);
     sysbus_realize_and_unref(SYS_BUS_DEVICE(s->soc), &error_fatal);
 
+    /* NOR at bank 0 */
+    DriveInfo *dinfo = drive_get(IF_PFLASH, 0, 0);
+    if (dinfo) {
+        DeviceState *pflash = qdev_new("cfi.pflash02");
+
+        qdev_prop_set_drive(pflash, "drive", blk_by_legacy_dinfo(dinfo));
+
+        // TODO: we can get input file size using blk_getlength().
+        // do we need it?
+        qdev_prop_set_uint32(pflash, "num-blocks", 128);
+        qdev_prop_set_uint32(pflash, "sector-length", 128 * KiB);
+
+        qdev_prop_set_uint8(pflash, "width", 4);
+        // replicate nor-flash to fill the bank of 256 MB
+        // qdev_prop_set_uint8(pflash, "mappings", 4);
+        qdev_prop_set_uint8(pflash, "big-endian", 0);
+        qdev_prop_set_uint16(pflash, "id0", 0x0001);
+        qdev_prop_set_uint16(pflash, "id1", 0x0000);
+        qdev_prop_set_uint16(pflash, "id2", 0x0003);
+        qdev_prop_set_uint16(pflash, "id3", 0x0001);
+        qdev_prop_set_uint16(pflash, "unlock-addr0", 0x0555);
+        qdev_prop_set_uint16(pflash, "unlock-addr1", 0x02AA);
+        qdev_prop_set_string(pflash, "name", "nor_flash");
+        sysbus_realize_and_unref(SYS_BUS_DEVICE(pflash), &error_fatal);
+
+        MemoryRegion *pflash_region =
+            sysbus_mmio_get_region(SYS_BUS_DEVICE(pflash), 0);
+        memory_region_add_subregion_overlap(
+            oi10_o32t_get_ext_mem_region(DEVICE(s->soc)), 0x0,
+            pflash_region, 1);
+    }
+
     /* MRAM at bank 5 */
     g_assert(s->mram_path != NULL);
     MemoryRegion *mram = g_new(MemoryRegion, 1);
