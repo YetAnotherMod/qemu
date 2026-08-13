@@ -101,3 +101,37 @@ qemu_astra1.7:
 
     - *common_script_part
   <<: *common_after_part
+
+qemu_spacewire_fedora39:
+  stage: build
+  image: lrepo.module.ru/fedora:39
+  when: manual
+  before_script:
+    # INFO: setup clean fedora to use local repositories
+    - rm -rf /etc/yum.repos.d/*
+
+    - echo '[fedora]' >> /etc/yum.repos.d/fedora.repo
+    - echo 'name=Friendly Name for lrepo' >> /etc/yum.repos.d/fedora.repo
+    - echo 'baseurl=https://lrepo.module.ru/repository/fedoraproject/archive/fedora/linux/releases/$releasever/Everything/$basearch/os/' >> /etc/yum.repos.d/fedora.repo
+    - echo 'enabled=1' >> /etc/yum.repos.d/fedora.repo
+    - echo 'gpgcheck=0' >> /etc/yum.repos.d/fedora.repo
+
+    - echo 'zchunk=False' >> /etc/dnf/dnf.conf
+    - echo 'minrate=0' >> /etc/dnf/dnf.conf
+    - echo 'timeout=60' >> /etc/dnf/dnf.conf
+    - echo 'max_parallel_downloads=10' >> /etc/dnf/dnf.conf
+
+    - dnf clean all
+    - dnf update
+  script:
+    - dnf group install -y "Development Tools"
+    - dnf install -y git glib2-devel libfdt-devel pixman-devel zlibrary-devel ninja-build python3-pip curl unzip
+
+    # download virtsw library and install it
+    - 'curl --output /artifacts.zip --header "JOB-TOKEN: $CI_JOB_TOKEN"
+        "$CI_API_V4_URL/projects/276/jobs/artifacts/develop/download?job=fedora39_64"'
+    - unzip /artifacts.zip -d /
+    - dnf install -y /_packages/emuio_virtsw.rpm
+
+    - *common_script_part
+  <<: *common_after_part
