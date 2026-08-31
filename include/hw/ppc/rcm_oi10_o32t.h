@@ -19,4 +19,14 @@ MemoryRegion *oi10_o32t_get_ext_mem_region(DeviceState *dev);
 BusState *oi10_o32t_get_sdio_bus(DeviceState *dev, int sdio_num);
 BusState *oi10_o32t_get_spi_bus(DeviceState *dev, int spi_num);
 
+/**
+ * @brief возвращает qemu_irq для линий INT0-INT7 которые служат для приема
+ * прерывания от внешней микросхемы
+ *
+ * @param dev указатель на структуру устройства ОИ10/О32Т
+ * @param int_num - номер линии внешнего прерывания. Разрешенные значения: 0-7
+ * @return qemu_irq - линия для подключения прерывания от внешнего устройства
+ */
+qemu_irq oi10_o32t_get_ext_int_irq(DeviceState *dev, unsigned int_num);
+
 #endif /* RCM_OI10_H */
