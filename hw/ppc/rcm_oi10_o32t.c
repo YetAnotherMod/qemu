@@ -765,6 +765,13 @@ static void oi10_o32t_reset(DeviceState *dev)
     }
 }
 
+qemu_irq oi10_o32t_get_ext_int_irq(DeviceState *dev, unsigned int_num)
+{
+    assert(int_num < 8);
+    Oi10O32tState *s = OI10_O32T(dev);
+    return qdev_get_gpio_in(DEVICE(&s->mpic), 66 + int_num);
+}
+
 MemoryRegion *oi10_o32t_get_ext_mem_region(DeviceState *dev)
 {
     Oi10O32tState *s = OI10_O32T(dev);
@@ -869,3 +876,4 @@ static void oi10_o32t_register_type(void)
 }
 
 type_init(oi10_o32t_register_type)
+
