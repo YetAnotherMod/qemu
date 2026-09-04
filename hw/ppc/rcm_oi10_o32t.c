@@ -16,6 +16,7 @@
 #include "net/eth.h"
 #include "hw/misc/commport.h"
 #include "hw/ssi/pl022.h"
+#include "hw/timer/double_timer.h"
 
 #ifdef CONFIG_VIRTSW
 #include "hw/misc/rcm_spacewire.h"
@@ -59,6 +60,7 @@ struct Oi10O32tState {
     /* DCR bus */
     MpicState mpic;
     PLB6DMAState plb6dma;
+    DoubleTimerState dit;
 
     /* PLB6 bus */
     MemoryRegion *EMI;
