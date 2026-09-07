@@ -99,3 +99,12 @@ sifive_pwm_write(uint64_t data, uint64_t offset) "Write 0x%" PRIx64 " at address
 sh_timer_start_stop(int enable, int current) "%d (%d)"
 sh_timer_read(uint64_t offset) "tmu012_read 0x%" PRIx64
 sh_timer_write(uint64_t offset, uint64_t value) "tmu012_write 0x%" PRIx64 " 0x%08" PRIx64
+
+# dual interval timer
+double_timer_reg_read(uint32_t ofst) "DIT. Offset: 0x%" PRIx32
+double_timer_reg_write(uint32_t ofst, uint32_t val) "DIT. Offset: 0x%" PRIx32 "; val: 0x%" PRIx32
+double_timer_restart_safe(void * tu)"DIT timer restart(0x%p)"
+double_timer_stop_safe(void * tu)"DIT timer stop(0x%p)"
+double_timer_reset(void) "DIT reset"
+double_timer_realize(void) "DIT realize"
+double_timer_unrealize(void) "DIT unrealize"

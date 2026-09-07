@@ -1,24 +1,37 @@
+/**
+ * @file double_timer.c
+ * @author Нелюбин Виктор. ЗАО НТЦ Модуль (v.nelyubin@module.ru)
+ * @brief контроллер DIT (сдвоенный интервальный таймер)
+ * @version 0.1
+ * @date 2026-09-07
+ * 
+ * 
+ */
 
 #include "qemu/osdep.h"
-#include "hw/sysbus.h"
 #include "hw/qdev-properties.h"
+#include "cpu.h"
+#include "hw/ppc/ppc.h"
 #include "qemu/log.h"
 #include "qemu/timer.h"
-#include "qapi/error.h"
 #include "hw/ptimer.h"
 #include "migration/vmstate.h"
 #include "hw/irq.h"
+#include "trace.h"
+#include "qapi/error.h"
 #include "hw/timer/double_timer.h"
 
-/*
- * Forward declarations.
- */
+/// @brief обновить линию прерывания
+/// @param tu указатель на интервальный таймер
 static void double_timer_update_irq(TimerUnitState *tu);
+
+/// @brief перерассчет частоты таймера в зависимости от делителя
+/// @param base_freq_hz опорная частота контроллера
+/// @param tu указатель на интервальный таймер
 static void double_timer_recalc_freq(uint64_t base_freq_hz, TimerUnitState *tu);
 static void double_timer_restart_safe(TimerUnitState *tu);
 static void double_timer_stop_safe(TimerUnitState *tu);
-
-static uint64_t double_timer_get_current_count(TimerUnitState *tu);
+static uint32_t double_timer_get_current_count(TimerUnitState *tu);
 
 /*
  * ptimer callback 
@@ -184,6 +197,7 @@ static void double_timer_restart(TimerUnitState *tu)
  */
 static void double_timer_restart_safe(TimerUnitState *tu)
 {
+    trace_double_timer_restart_safe(tu);
     ptimer_transaction_begin(tu->ptimer);
     double_timer_restart(tu);
     ptimer_transaction_commit(tu->ptimer);
@@ -194,6 +208,7 @@ static void double_timer_restart_safe(TimerUnitState *tu)
  */
 static void double_timer_stop_safe(TimerUnitState *tu)
 {
+    trace_double_timer_stop_safe(tu);
     ptimer_transaction_begin(tu->ptimer);
     ptimer_stop(tu->ptimer);
     ptimer_transaction_commit(tu->ptimer);
@@ -202,7 +217,7 @@ static void double_timer_stop_safe(TimerUnitState *tu)
 /*
  * Get the current counter value from the ptimer.
  */
-static uint64_t double_timer_get_current_count(TimerUnitState *tu)
+static uint32_t double_timer_get_current_count(TimerUnitState *tu)
 {
     return ptimer_get_count(tu->ptimer);
 }
@@ -210,20 +225,18 @@ static uint64_t double_timer_get_current_count(TimerUnitState *tu)
 /*
  * MMIO read handler.
  */
-static uint64_t double_timer_mmio_read(void *opaque, hwaddr addr, unsigned size)
+static uint32_t double_timer_reg_read(void *opaque, int dcrn)
 {
     DoubleTimerState *s = (DoubleTimerState *)opaque;
     TimerUnitState *tu = NULL;
-    int timer_idx = 0;
-    uint64_t ret = 0;
+    uint32_t timer_idx = 0;
+    uint32_t ret = 0;
+    uint32_t addr = (uint32_t)dcrn;
 
-    if (size != 4)
-    {
-        qemu_log_mask(LOG_GUEST_ERROR,
-                      "%s: invalid read size %u at 0x%" HWADDR_PRIx "\n",
-                      __func__, size, addr);
-        return 0;
-    }
+    assert(addr >= s->baseaddr);
+    addr -= s->baseaddr;
+
+    trace_double_timer_reg_read(addr);
 
     /*
      * вычислить индекс таймера
@@ -261,8 +274,7 @@ static uint64_t double_timer_mmio_read(void *opaque, hwaddr addr, unsigned size)
             return PCELL_ID_3_VAL;
         default:
             qemu_log_mask(LOG_GUEST_ERROR,
-                          "%s: invalid read at 0x%" HWADDR_PRIx "\n", __func__,
-                          addr);
+                          "%s: Warning! Invalid read at 0x%" PRIx32 "\n", __func__, addr);
             return 0;
         }
     }
@@ -272,22 +284,22 @@ static uint64_t double_timer_mmio_read(void *opaque, hwaddr addr, unsigned size)
     switch (addr)
     {
     case TIMER_LOAD_OFFSET(0):
-        ret = (uint64_t)tu->load;
+        ret = tu->load;
         break;
     case TIMER_VALUE_OFFSET(0):
         ret = double_timer_get_current_count(tu);
         break;
     case TIMER_CONTROL_OFFSET(0):
-        ret = (uint64_t)tu->control;
+        ret = tu->control;
         break;
     case TIMER_RIS_OFFSET(0):
-        ret = (uint64_t)tu->ris;
+        ret = tu->ris;
         break;
     case TIMER_MIS_OFFSET(0):
-        ret = (uint64_t)tu->mis;
+        ret = tu->mis;
         break;
     case TIMER_BG_LOAD_OFFSET(0):
-        ret = (uint64_t)tu->bg_load;
+        ret = tu->bg_load;
         break;
     case TIMER_INT_CLR_OFFSET(0):
         /* Reads from IntClr are undefined; return 0 */
@@ -296,7 +308,7 @@ static uint64_t double_timer_mmio_read(void *opaque, hwaddr addr, unsigned size)
         break;
     default:
         qemu_log_mask(LOG_GUEST_ERROR,
-                      "%s: invalid read at 0x%" HWADDR_PRIx " (timer %d)\n",
+                      "%s: invalid read at 0x%" PRIx32 " (timer %d)\n",
                       __func__, addr, timer_idx);
     }
 
@@ -306,25 +318,21 @@ static uint64_t double_timer_mmio_read(void *opaque, hwaddr addr, unsigned size)
 /*
  * MMIO write handler.
  */
-static void double_timer_mmio_write(void *opaque, hwaddr addr,
-                                uint64_t value, unsigned size)
+static void double_timer_reg_write(void *opaque, int dcrn, uint32_t val)
 {
     DoubleTimerState *s = opaque;
     TimerUnitState *tu = NULL;
-    int timer_idx = 0;
+    uint32_t timer_idx = 0;
     uint32_t old_control = 0;
     bool timer_was_enabled = false;
     uint64_t limit = 0;
     uint32_t tmp = 0;
+    uint32_t addr = (uint32_t)dcrn;
 
-    /* All registers are 32-bit */
-    if (size != 4)
-    {
-        qemu_log_mask(LOG_GUEST_ERROR,
-                      "%s: invalid write size %u at 0x%" HWADDR_PRIx "\n",
-                      __func__, size, addr);
-        return;
-    }
+    assert(addr >= s->baseaddr);
+    addr -= s->baseaddr;
+
+    trace_double_timer_reg_write(addr, val);
 
     /*
      * вычисляем таймер
@@ -342,17 +350,18 @@ static void double_timer_mmio_write(void *opaque, hwaddr addr,
     {
         /* Peripheral ID and PCell ID registers are read-only */
         qemu_log_mask(LOG_GUEST_ERROR,
-                      "%s: write to read-only register at 0x%" HWADDR_PRIx "\n",
+                      "%s: write to read-only register at 0x%" PRIx32 "\n",
                       __func__, addr);
         return;
     }
 
+    /// если здесь находимся, то адрес внутри регистров таймера
     tu = &s->timers[timer_idx];
     switch (addr)
     {
     case TIMER_LOAD_OFFSET(0):
         /* TimerXLoad: write to load register */
-        tu->load = value;
+        tu->load = val;
         if((tu->control & CONTROL_TIMER_MODE_LOAD) == CONTROL_TIMER_MODE_LOAD)
         {
             limit = double_timer_calc_limit(tu);
@@ -368,7 +377,7 @@ static void double_timer_mmio_write(void *opaque, hwaddr addr,
         }
         break;
     case TIMER_CONTROL_OFFSET(0):
-        tmp = (uint32_t)value;
+        tmp = val;
         /* TimerXControl: write to control register */
         old_control = tu->control;
         timer_was_enabled = old_control & CONTROL_TIMER_EN;
@@ -406,7 +415,7 @@ static void double_timer_mmio_write(void *opaque, hwaddr addr,
 
     case TIMER_BG_LOAD_OFFSET(0):
         /* TimerXBGLoad: write to background load register */
-        tu->bg_load = value;
+        tu->bg_load = val;
 
         /*
         если таймер в данный момент запущен, то подменим регистр при достижении нуля
@@ -423,23 +432,10 @@ static void double_timer_mmio_write(void *opaque, hwaddr addr,
         break;
     default:
         qemu_log_mask(LOG_GUEST_ERROR,
-                      "%s: invalid write at 0x%" HWADDR_PRIx " (timer %d)\n",
+                      "%s: invalid write at 0x%" PRIx32 " (timer %d)\n",
                       __func__, addr, timer_idx);
     }
 }
-
-/*
- * MMIO operation table.
- */
-static const MemoryRegionOps double_timer_mmio_ops = {
-    .read = double_timer_mmio_read,
-    .write = double_timer_mmio_write,
-    .endianness = DEVICE_NATIVE_ENDIAN,
-    .valid.min_access_size = 4,
-    .valid.max_access_size = 4,
-    .impl.min_access_size = 4,
-    .impl.max_access_size = 4,
-};
 
 /*
  * Device reset.
@@ -447,6 +443,7 @@ static const MemoryRegionOps double_timer_mmio_ops = {
 static void double_timer_reset(DeviceState *dev)
 {
     DoubleTimerState *s = DOUBLE_TIMER(dev);
+    trace_double_timer_reset();
 
     for (int i = 0; i < NUM_TIMERS; i++)
     {
@@ -486,7 +483,11 @@ static void double_timer_reset(DeviceState *dev)
  */
 static void double_timer_realize(DeviceState *dev, Error **errp)
 {
+    trace_double_timer_realize();
     DoubleTimerState *s = DOUBLE_TIMER(dev);
+    /// для доступа к dcr
+    PowerPCCPU *cpu = POWERPC_CPU(s->cpu);
+    CPUPPCState *env = &cpu->env;
     /// @todo задать какой то минимальный порог частоты
     if (s->base_freq_hz == 0)
     {
@@ -510,6 +511,13 @@ static void double_timer_realize(DeviceState *dev, Error **errp)
             /// это странно - так как режим по умолчанию - счетчик 16 бит 
             ptimer_set_count(tu->ptimer, UINT32_MAX);
             ptimer_transaction_commit(tu->ptimer);
+            
+        }
+        // коллбеки для регистров контроллера
+        for (uint32_t dit_reg = 0; dit_reg < DOUBLE_TIMER_REG_SZB; dit_reg += 4)
+        {
+            ppc_dcr_register(env, (dit_reg + s->baseaddr), s, double_timer_reg_read,
+                         double_timer_reg_write);
         }
     }
 }
@@ -519,6 +527,7 @@ static void double_timer_realize(DeviceState *dev, Error **errp)
  */
 static void double_timer_unrealize(DeviceState *dev)
 {
+    trace_double_timer_unrealize();
     DoubleTimerState *s = DOUBLE_TIMER(dev);
 
     for (int i = 0; i < NUM_TIMERS; i++)
@@ -529,13 +538,40 @@ static void double_timer_unrealize(DeviceState *dev)
         ptimer_free(tu->ptimer);
         tu->ptimer = NULL;
     }
+    s->cpu = NULL;
+}
+
+/*
+ * Instance initialization.
+ */
+static void double_timer_init(Object *obj)
+{
+    DoubleTimerState *s = DOUBLE_TIMER(obj);
+
+    /* Initialize interrupt lines for each timer */
+    for (int i = 0; i < NUM_TIMERS; i++)
+    {
+        qdev_init_gpio_out(DEVICE(s), &s->timers[i].irq, 1);
+        s->timers[i].load = 0;
+        s->timers[i].bg_load = 0;
+        s->timers[i].control = CONTROL_VAL_DEFAULT;
+        s->timers[i].ris = 0;
+        s->timers[i].mis = 0;
+        s->timers[i].bg_load_pending = false;
+    }
 }
 
 /*
  * Property definitions.
  */
 static Property double_timer_properties[] = {
-    DEFINE_PROP_UINT32("dit-freq-hz", DoubleTimerState, base_freq_hz, 25000000),
+    /// передаем указатель на SOC
+    DEFINE_PROP_LINK("cpu-state", DoubleTimerState, cpu, TYPE_CPU, CPUState *),
+    /// базовый адрес контроллера на шине DCR
+    DEFINE_PROP_UINT32("baseaddr", DoubleTimerState, baseaddr, 0x800A0000),
+    /// тактовый сигнал шины DCR
+    DEFINE_PROP_UINT32(DOUBLE_TIMER_MAIN_FREQ, DoubleTimerState, base_freq_hz,
+                       25000000),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -550,34 +586,8 @@ static void double_timer_class_init(ObjectClass *klass, void *data)
     dc->unrealize = double_timer_unrealize;
     dc->reset = double_timer_reset;
     dc->desc = "dual-interval-timer module. You can set base frequency by "
-               "\"dit-freq-hz\" property. Default frequency 25MHz";
+               "\"dcr-freq-hz\" property. Default frequency: 25MHz";
     device_class_set_props(dc, double_timer_properties);
-}
-
-/*
- * Instance initialization.
- */
-static void double_timer_init(Object *obj)
-{
-    DoubleTimerState *s = DOUBLE_TIMER(obj);
-    SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
-
-    /* Initialize the MMIO region */
-    memory_region_init_io(&s->iomem, obj, &double_timer_mmio_ops, s,
-                          "double-timer-mmio", DOUBLE_TIMER_MMIO_SZB);
-    sysbus_init_mmio(sbd, &s->iomem);
-
-    /* Initialize interrupt lines for each timer */
-    for (int i = 0; i < NUM_TIMERS; i++)
-    {
-        sysbus_init_irq(sbd, &s->timers[i].irq);
-        s->timers[i].load = 0;
-        s->timers[i].bg_load = 0;
-        s->timers[i].control = CONTROL_VAL_DEFAULT;
-        s->timers[i].ris = 0;
-        s->timers[i].mis = 0;
-        s->timers[i].bg_load_pending = false;
-    }
 }
 
 /*
@@ -586,7 +596,7 @@ static void double_timer_init(Object *obj)
 static const TypeInfo double_timer_info = 
 {
     .name = TYPE_DOUBLE_TIMER,
-    .parent = TYPE_SYS_BUS_DEVICE,
+    .parent = TYPE_DEVICE,
     .instance_size = sizeof(DoubleTimerState),
     .instance_init = double_timer_init,
     .class_init = double_timer_class_init,

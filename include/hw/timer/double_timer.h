@@ -1,16 +1,27 @@
+/**
+ * @file double_timer.h
+ * @author Нелюбин Виктор. ЗАО НТЦ Модуль (v.nelyubin@module.ru)
+ * @brief контроллер DIT (сдвоенный интервальный таймер)
+ * @version 0.1
+ * @date 2026-09-07
+ * 
+ * 
+ */
+
 #ifndef HW_TIMER_DOUBLE_TIMER_H
 #define HW_TIMER_DOUBLE_TIMER_H
 
-#include "hw/sysbus.h"
 #include "qemu/timer.h"
 #include "hw/ptimer.h"
 
 #define TYPE_DOUBLE_TIMER "double-timer"
 OBJECT_DECLARE_SIMPLE_TYPE(DoubleTimerState, DOUBLE_TIMER)
-
-
-/// размер mmio контроллера
-#define DOUBLE_TIMER_MMIO_SZB 0x1000U
+    
+/// опорная частота модуля DIT
+#define DOUBLE_TIMER_MAIN_FREQ "dcr-freq-hz"
+    
+/// размер регистрового файла контроллера
+#define DOUBLE_TIMER_REG_SZB 0x1000U
 /// размер блока регистров таймера
 #define TIMER_REG_BLOCK_SZB 0x20U
 
@@ -115,15 +126,17 @@ typedef struct TimerUnitState
 } TimerUnitState;
 
 /*
- * Main device state.
+ * DIT device state.
  */
 struct DoubleTimerState 
 {
-    SysBusDevice parent_obj;
+    DeviceState parent_obj;
 
-    MemoryRegion iomem; /* MMIO region */
-
+	/* properties */
+	CPUState *cpu; /*link to cpu*/
     uint32_t base_freq_hz; /* base frequency (property) */
+	uint32_t baseaddr;/*base address on dcr bus*/
+
     TimerUnitState timers[NUM_TIMERS];
 };
 
