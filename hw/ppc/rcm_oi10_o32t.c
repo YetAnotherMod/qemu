@@ -264,6 +264,16 @@ static void dcr_unknown256(CPUPPCState *env, uint32_t base)
     }
 }
 
+static void dcr_unknown4k(CPUPPCState *env, uint32_t base)
+{
+    uint32_t i;
+
+    for (i = 0x0; i < 0x1000; i++) {
+        ppc_dcr_register(env, base + i, NULL, dcr_unknown_read,
+                         dcr_unknown_write);
+    }
+}
+
 static void dcr_unknown64k(CPUPPCState *env, uint32_t base)
 {
     uint32_t i;
@@ -478,7 +488,12 @@ static void oi10_o32t_realize(DeviceState *dev, Error **errp)
     dcr_ddr_mclfir_register(env, 0x80070000);
     dcr_unknown64k(env, 0x80080000);
     dcr_sctl_register(env, 0x80090000, s);
-    dcr_unknown64k(env, 0x800a0000);
+    /// 0x800a0000 - 0x800affff - область DIT
+    /// 0x800a0000 - 0x800a0FFF - регистровый файл DIT. Остальные 60КБ не используется
+    for (uint32_t addr = 0x800a1000; addr < 0x800b0000; addr += 0x1000)
+    {
+        dcr_unknown4k(env, addr);
+    }
     dcr_unknown64k(env, 0x800b0000);
     dcr_unknown64k(env, 0x800c0000);
     dcr_unknown64k(env, 0x800d0000);
@@ -512,6 +527,23 @@ static void oi10_o32t_realize(DeviceState *dev, Error **errp)
         qdev_connect_gpio_out(DEVICE(&s->plb6dma), i,
                               qdev_get_gpio_in(DEVICE(&s->mpic), 3 + i));
     }
+
+    /// DIT контроллер
+    object_initialize_child(OBJECT(s), "DIT", &s->dit, TYPE_DOUBLE_TIMER);
+    object_property_set_int(OBJECT(&s->dit), "baseaddr", DOUBLE_TIMER_BASE_ADDR,
+                            &error_fatal);
+    object_property_set_int(OBJECT(&s->dit), DOUBLE_TIMER_MAIN_FREQ,
+                            DOUBLE_TIMER_BASE_FREQ, &error_fatal);
+    object_property_set_link(OBJECT(&s->dit), "cpu-state", OBJECT(s->cpu),
+                             &error_fatal);
+    qdev_realize(DEVICE(&s->dit), NULL, &error_fatal);
+
+    qdev_connect_gpio_out_named(
+        DEVICE(&s->dit), DOUBLE_TIMER_INT_BASE "0", 0,
+        qdev_get_gpio_in(DEVICE(&s->mpic), OI10_DIT1_IRQ_LINE)); // dit-int0
+    qdev_connect_gpio_out_named(
+        DEVICE(&s->dit), DOUBLE_TIMER_INT_BASE "1", 0,
+        qdev_get_gpio_in(DEVICE(&s->mpic), OI10_DIT2_IRQ_LINE)); // dit-int1
 
     /* PLB6 bus */
     /* Board has separated AXI bus for peripherial devices */
