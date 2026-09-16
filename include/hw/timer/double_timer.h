@@ -19,6 +19,8 @@ OBJECT_DECLARE_SIMPLE_TYPE(DoubleTimerState, DOUBLE_TIMER)
     
 /// опорная частота модуля DIT
 #define DOUBLE_TIMER_MAIN_FREQ "dcr-freq-hz"
+/// имя линии прерывания таймера
+#define DOUBLE_TIMER_INT_NAME   "dit-int"
     
 /// размер регистрового файла контроллера
 #define DOUBLE_TIMER_REG_SZB 0x1000U
