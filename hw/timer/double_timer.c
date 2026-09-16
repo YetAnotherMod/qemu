@@ -366,6 +366,7 @@ static void double_timer_reg_write(void *opaque, int dcrn, uint32_t val)
         {
             limit = double_timer_calc_limit(tu);
             ptimer_transaction_begin(tu->ptimer);
+            ///! новое значение сразу в текущий счетчик
             ptimer_set_limit(tu->ptimer, limit, 1);
             ptimer_transaction_commit(tu->ptimer);
         }
@@ -442,7 +443,6 @@ static void double_timer_reg_write(void *opaque, int dcrn, uint32_t val)
  */
 static void double_timer_reset(DeviceState *dev)
 {
-    printf("\n[%s] start\n", __func__);
     DoubleTimerState *s = DOUBLE_TIMER(dev);
     trace_double_timer_reset();
 
@@ -477,7 +477,6 @@ static void double_timer_reset(DeviceState *dev)
         /* Recalculate frequency */
         double_timer_recalc_freq(s->base_freq_hz ,tu);
     }
-    printf("\n[%s] done\n", __func__);
 }
 
 /*
@@ -501,7 +500,6 @@ static void double_timer_realize(DeviceState *dev, Error **errp)
         for (int i = 0; i < NUM_TIMERS; i++)
         {
             TimerUnitState *tu = &s->timers[i];
-            qemu_irq_lower(tu->irq);
 
             tu->ptimer = ptimer_init(double_timer_ptimer_cb, tu,
                                      PTIMER_POLICY_CONTINUOUS_TRIGGER);
@@ -523,7 +521,7 @@ static void double_timer_realize(DeviceState *dev, Error **errp)
                          double_timer_reg_write);
         }
     }
-    printf("\n[%s] done \n", __func__);
+    double_timer_reset(dev);
 }
 
 /*
@@ -551,11 +549,12 @@ static void double_timer_unrealize(DeviceState *dev)
 static void double_timer_init(Object *obj)
 {
     DoubleTimerState *s = DOUBLE_TIMER(obj);
-
+    char name[256];
     /* Initialize interrupt lines for each timer */
     for (uint32_t i = 0; i < NUM_TIMERS; i++)
     {
-        qdev_init_gpio_out_named(DEVICE(s), &s->timers[i].irq, DOUBLE_TIMER_INT_NAME, 1);
+        snprintf(name, sizeof(name),DOUBLE_TIMER_INT_BASE"%u", i);
+        qdev_init_gpio_out_named(DEVICE(s), &s->timers[i].irq, name, 1);
         s->timers[i].load = 0;
         s->timers[i].bg_load = 0;
         s->timers[i].control = CONTROL_VAL_DEFAULT;

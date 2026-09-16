@@ -17,26 +17,21 @@
 #define TYPE_DOUBLE_TIMER "double-timer"
 OBJECT_DECLARE_SIMPLE_TYPE(DoubleTimerState, DOUBLE_TIMER)
     
+/// количество таймеров в контроллере
+#define NUM_TIMERS 2U
 /// опорная частота модуля DIT
 #define DOUBLE_TIMER_MAIN_FREQ "dcr-freq-hz"
-/// имя линии прерывания таймера
-#define DOUBLE_TIMER_INT_NAME   "dit-int"
+/// базовое имя линии прерывания таймера.
+/// Полное будет с индексом("dit-int0", "dit-int1", ... "dit-intN")
+#define DOUBLE_TIMER_INT_BASE   "dit-int"
     
-/// размер регистрового файла контроллера
+/// размер регистрового файла контроллера DIT
 #define DOUBLE_TIMER_REG_SZB 0x1000U
-/// размер блока регистров таймера
+/// размер блока регистров одного таймера
 #define TIMER_REG_BLOCK_SZB 0x20U
 
-/*
- * Number of timers in the device.
- */
-#define NUM_TIMERS 2U
 
-/*
- * Timer register offsets (each 32-bit, 4-byte aligned).
- * Timer 1 registers start at offset 0x00, Timer 2 at TIMER_REG_BLOCK_SZ.
- */
-
+/// смещение регистров таймера в контроллере
 /* TimerXLoad */
 #define TIMER_LOAD_OFFSET(t) ((t)*TIMER_REG_BLOCK_SZB + 0x00U)
 /* TimerXValue */
@@ -52,24 +47,19 @@ OBJECT_DECLARE_SIMPLE_TYPE(DoubleTimerState, DOUBLE_TIMER)
 /* TimerXBGLoad */
 #define TIMER_BG_LOAD_OFFSET(t) ((t)*TIMER_REG_BLOCK_SZB + 0x18U)
 
-/*
- * Peripheral ID registers (shared, after timer registers).
- * 0x00041804
- */
+/// смещение регистров perif_id
 #define PERIPH_ID_0_OFFSET 0xFE0U /* 0x04 */
 #define PERIPH_ID_1_OFFSET 0xFE4U /* 0x18 */
 #define PERIPH_ID_2_OFFSET 0xFE8U /* 0x04 */
 #define PERIPH_ID_3_OFFSET 0xFECU /* 0x00 */
 
-/// значения регистров
+/// значения регистров perif_id
 #define PERIPH_ID_0_VAL 0x04U
 #define PERIPH_ID_1_VAL 0x18U
 #define PERIPH_ID_2_VAL 0x04U
 #define PERIPH_ID_3_VAL 0x00U
 
-/*
- * PCell ID registers.
- */
+/// смещение регистров pcell_id
 #define PCELL_ID_0_OFFSET 0xFF0U /* 0x0D */
 #define PCELL_ID_1_OFFSET 0xFF4U /* 0xF0 */
 #define PCELL_ID_2_OFFSET 0xFF8U /* 0x05 */
