@@ -9,31 +9,61 @@ OBJECT_DECLARE_SIMPLE_TYPE(OI10State, OI10)
 #define TYPE_O32T "o32t"
 OBJECT_DECLARE_SIMPLE_TYPE(O32TState, O32T)
 
-//>>>>>>>>>>>>>>>oi10_config defgroup begin>>>>>>>>>>>>>>>>>>>>>>
+/**
+    \defgroup OI10_INTERFACE_API
+    \ingroup OI10
+    \brief интерфейсные функции
+*/
+/**
+    \defgroup OI10_PERIF_SETTINGS
+    \ingroup OI10
+    \brief настройки периферии СнК ОИ10
+*/
+/**
+    \defgroup DIT_SETTINGS
+    \ingroup OI10_PERIF_SETTINGS
+    \brief настройки модуля DIT
+*/
+/**
+    \defgroup OI10_DCR_MEMORY_MAP
+    \ingroup OI10
+    \brief карта памяти  DCR СнК ОИ10
+*/
+
 /**
     \defgroup OI10_CONFIG
-    \ingroup 
-    \brief 
+    \ingroup OI10
+    \brief конфигурация сборки модели OI10
 */
-///@{
-
 #define OI10_O32T_USE_INTERNAL_ROM 7
 #define OI10_O32T_SD_CARD_INSERTED_GPIO 3
 #define OI10_O32T_BOOT_IN_HOST_MODE 1
 #define OI10_O32T_BOOT_CFG_DEFVAL \
     (1 << OI10_O32T_USE_INTERNAL_ROM | 1 << OI10_O32T_BOOT_IN_HOST_MODE)
 
-///@}
-//<<<<<<<<<<<<<<<<oi10_config defgroup end<<<<<<<<<<<<<<<<<<<<<<<
 
-    
-//>>>>>>>>>>>>>>>oi10_interface_api defgroup begin>>>>>>>>>>>>>>>>>>>>>>
+/// базовый адрес контроллера DIT по умолчанию. Можно изменять через свойство baseaddr
+/// @ingroup OI10_DCR_MEMORY_MAP
+#define DOUBLE_TIMER_BASE_ADDR   0x800A0000U
+
+/// DIT IRQ line1
+/// \ingroup DIT_SETTINGS
+#define OI10_DIT1_IRQ_LINE 40U
+/// DIT IRQ line2
+/// \ingroup DIT_SETTINGS
+#define OI10_DIT2_IRQ_LINE 41U
+
 /**
-    \defgroup OI10_INTERFACE_API
-    \ingroup 
-    \brief интерфейсные функции
+* @brief базовая частота контроллера DIT
+* @details Постоянная базовая частота контроллера. Подается от DCR(CLK_DCR)
+* Эту частоту каждый таймер может делить на 1, 16, 256
+* 
+* @warning на данный момент от регистров системы тактирования не зависит и
+* зафиксировано на значении 25MHz.
+* @ingroup DIT_SETTINGS
 */
-///@{
+#define DOUBLE_TIMER_BASE_FREQ  25000000
+    
 
 MemoryRegion *oi10_o32t_get_ext_mem_region(DeviceState *dev);
 BusState *oi10_o32t_get_sdio_bus(DeviceState *dev, int sdio_num);
@@ -46,6 +76,8 @@ BusState *oi10_o32t_get_spi_bus(DeviceState *dev, int spi_num);
  * @param dev указатель на структуру устройства ОИ10/О32Т
  * @param int_num - номер линии внешнего прерывания. Разрешенные значения: 0-7
  * @return qemu_irq - линия для подключения прерывания от внешнего устройства
+ *
+ * @ingroup OI10_INTERFACE_API
  */
 qemu_irq oi10_o32t_get_ext_int_irq(DeviceState *dev, unsigned int_num);
 
