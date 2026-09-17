@@ -20,11 +20,6 @@ OBJECT_DECLARE_SIMPLE_TYPE(O32TState, O32T)
     \brief настройки периферии СнК ОИ10
 */
 /**
-    \defgroup DIT_SETTINGS
-    \ingroup OI10_PERIF_SETTINGS
-    \brief настройки модуля DIT
-*/
-/**
     \defgroup OI10_DCR_MEMORY_MAP
     \ingroup OI10
     \brief карта памяти  DCR СнК ОИ10
@@ -44,14 +39,20 @@ OBJECT_DECLARE_SIMPLE_TYPE(O32TState, O32T)
 
 /// базовый адрес контроллера DIT по умолчанию. Можно изменять через свойство baseaddr
 /// @ingroup OI10_DCR_MEMORY_MAP
-#define DOUBLE_TIMER_BASE_ADDR   0x800A0000U
+#define DOUBLE_TIMER_BASE_ADDR     0x800A0000U
+/// базовый адрес контроллера WDT по умолчанию. Можно изменять через свойство baseaddr
+/// @ingroup OI10_DCR_MEMORY_MAP
+#define WDT_BASE_ADDR              0x800B0000U
 
 /// DIT IRQ line1
-/// \ingroup DIT_SETTINGS
+/// \ingroup OI10_PERIF_SETTINGS
 #define OI10_DIT1_IRQ_LINE 40U
 /// DIT IRQ line2
-/// \ingroup DIT_SETTINGS
+/// \ingroup OI10_PERIF_SETTINGS
 #define OI10_DIT2_IRQ_LINE 41U
+/// WDT IRQ line
+/// \ingroup OI10_PERIF_SETTINGS
+#define OI10_WDT_IRQ_LINE 42U
 
 /**
 * @brief базовая частота контроллера DIT
@@ -59,10 +60,22 @@ OBJECT_DECLARE_SIMPLE_TYPE(O32TState, O32T)
 * Эту частоту каждый таймер может делить на 1, 16, 256
 * 
 * @warning на данный момент от регистров системы тактирования не зависит и
-* зафиксировано на значении 25MHz.
-* @ingroup DIT_SETTINGS
+* зафиксирована на значении 25MHz.
+*
+* @ingroup OI10_PERIF_SETTINGS
 */
 #define DOUBLE_TIMER_BASE_FREQ  25000000
+
+/**
+* @brief базовая частота контроллера WDT
+* @details Постоянная базовая частота контроллера. Подается от DCR(CLK_DCR)
+* 
+* @warning на данный момент от регистров системы тактирования не зависит и
+* зафиксирована на значении 25MHz.
+*
+* @ingroup OI10_PERIF_SETTINGS
+*/
+#define WDT_BASE_FREQ  25000000
     
 
 MemoryRegion *oi10_o32t_get_ext_mem_region(DeviceState *dev);

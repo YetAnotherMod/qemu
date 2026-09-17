@@ -497,6 +497,13 @@ static void oi10_o32t_realize(DeviceState *dev, Error **errp)
         dcr_unknown4k(env, addr);
     }
     dcr_unknown64k(env, 0x800b0000);
+    //////////// 0x800B0000 - 0x800BFFFF - область WDT
+    /// 0x800B0000 - 0x800B0FFF - регистровый файл WDT. Остальные 60КБ не используется
+    for (uint32_t addr = (WDT_BASE_ADDR + 0x1000); addr < 0x800C0000; addr += 0x1000)
+    {
+        dcr_unknown4k(env, addr);
+    }
+    ////////////////////////////////////
     dcr_unknown64k(env, 0x800c0000);
     dcr_unknown64k(env, 0x800d0000);
 
@@ -546,6 +553,21 @@ static void oi10_o32t_realize(DeviceState *dev, Error **errp)
     qdev_connect_gpio_out_named(
         DEVICE(&s->dit), DOUBLE_TIMER_INT_BASE "1", 0,
         qdev_get_gpio_in(DEVICE(&s->mpic), OI10_DIT2_IRQ_LINE)); // dit-int1
+    /// WDT контроллер - arm sp805
+    object_initialize_child(OBJECT(s), "wdt", &s->wdt, TYPE_SP805);
+    object_property_set_int(OBJECT(&s->wdt), "baseaddr", WDT_BASE_ADDR, &error_fatal);
+    object_property_set_int(OBJECT(&s->wdt), "base-freq", WDT_BASE_FREQ, &error_fatal);
+    object_property_set_link(OBJECT(&s->wdt), "cpu-state", OBJECT(s->cpu), &error_fatal);
+    qdev_realize(DEVICE(&s->wdt), NULL, &error_fatal);
+
+    qdev_connect_gpio_out_named(DEVICE(&s->wdt), "wdt_irq", 0,
+        qdev_get_gpio_in(DEVICE(&s->mpic), OI10_WDT_IRQ_LINE)); // wdogint
+    /// @todo включить gpio wdogrst и добавить обработку сброса в эмулятор СнК
+    /*
+    qdev_connect_gpio_out_named(
+        DEVICE(&s->wdt), "wdt_res", 0,
+        qdev_get_gpio_in(DEVICE(&s->mpic), OI10_WDT_RES_LINE)); // wdogrst
+    */
 
     /* PLB6 bus */
     /* Board has separated AXI bus for peripherial devices */
