@@ -192,6 +192,7 @@ config OI10_O32T
     select GR1553B if VIRTMKO
     select COMMPORT
     select PLB6_DMA
+    select DOUBLE_TIMER
 
 config MT174
     bool
