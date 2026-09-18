@@ -41,7 +41,6 @@ qemu_deb11:
     # INFO: setup clean debian to use local repositories
     - echo "deb https://lrepo.module.ru/repository/debian bullseye main contrib non-free" > /etc/apt/sources.list
     - echo "deb https://lrepo.module.ru/repository/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
-    - echo "deb https://lrepo.module.ru/repository/debiansecurity bullseye-security main" >> /etc/apt/sources.list
     # INFO: ignore certificates issues
     - echo "Acquire::https::Verify-Peer "false";" >> /etc/apt/apt.conf.d/allowall
     - echo "Acquire::https::Verify-Host "false";" >> /etc/apt/apt.conf.d/allowall
@@ -61,7 +60,6 @@ qemu_mko_spacewire_deb11:
     # INFO: setup clean debian to use local repositories
     - echo "deb https://lrepo.module.ru/repository/debian bullseye main contrib non-free" > /etc/apt/sources.list
     - echo "deb https://lrepo.module.ru/repository/debian bullseye-updates main contrib non-free" >> /etc/apt/sources.list
-    - echo "deb https://lrepo.module.ru/repository/debiansecurity bullseye-security main" >> /etc/apt/sources.list
     # INFO: ignore certificates issues
     - echo "Acquire::https::Verify-Peer "false";" >> /etc/apt/apt.conf.d/allowall
     - echo "Acquire::https::Verify-Host "false";" >> /etc/apt/apt.conf.d/allowall
