@@ -190,13 +190,11 @@ static void sp805_trigger(SP805State *s, bool stop_timer)
     {
         if (s->control & SP805_CONTROL_RESEN)
         {
-            printf("\n[%s]Set WDOGRESET line\n", __func__);
             qemu_irq_raise(s->reset);
         }
 
         if (stop_timer)
         {
-            printf("\n[%s]Stop timer after WDOGRESET assert\n", __func__);
             ptimer_stop(s->timer);
         }
     }
@@ -234,7 +232,6 @@ static void sp805_ptimer_cb(void *opaque)
  */
 static void sp805_start_timer(SP805State *s)
 {
-    printf("\n[%s]Start WDT\n", __func__);
     if (s->load == 0)
     {
         qemu_log_mask(LOG_GUEST_ERROR,
@@ -258,7 +255,6 @@ static void sp805_start_timer(SP805State *s)
  */
 static void sp805_stop_timer(SP805State *s)
 {
-    printf("\n[%s]Stop WDT\n", __func__);
     ptimer_transaction_begin(s->timer);
     ptimer_stop(s->timer);
     ptimer_transaction_commit(s->timer);
@@ -308,7 +304,6 @@ static void sp805_write_control(SP805State *s, uint32_t val)
  */
 static void sp805_clear_interrupt(SP805State *s)
 {
-    printf("\n[%s]\n", __func__);
     s->ris = 0;
     s->mis = 0;
     qemu_irq_lower(s->irq);
@@ -340,7 +335,6 @@ static uint32_t sp805_dcr_read(void *opaque, int dcrn)
 {
     SP805State *s = SP805(opaque);
     uint32_t offset = (uint32_t)dcrn - s->baseaddr;
-    printf("\n[%s]offset: 0x%08x\n", __func__, offset);
 
     switch (offset)
     {
@@ -414,7 +408,6 @@ static void sp805_dcr_write(void *opaque, int dcrn, uint32_t val)
 {
     SP805State *s = SP805(opaque);
     uint32_t offset = (uint32_t)dcrn - s->baseaddr;
-    printf("\n[%s]offset: 0x%08x; value: 0x%08x\n", __func__, offset, val);
 
     /* Регистр блокировки доступен для записи всегда */
     if (offset == SP805_LOCK)
