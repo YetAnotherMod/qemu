@@ -497,17 +497,17 @@ static void sp805_dcr_write(void *opaque, int dcrn, uint32_t val)
 static void sp805_reset(DeviceState *dev)
 {
     SP805State *s = SP805(dev);
-
+    s->load = SP805_LOAD_RESET_VAL;
     if (s->timer)
     {
         ptimer_transaction_begin(s->timer);
         ptimer_stop(s->timer);
+        ptimer_set_limit(s->timer, s->load, 1);
         ptimer_transaction_commit(s->timer);
     }
 
-    s->load = SP805_LOAD_RESET_VAL;
     s->control = 0;
-    s->lock = 0;
+    s->lock = 0;// после перезагрузки контроллер открыт
     s->ris = 0;
     s->mis = 0;
 
@@ -579,6 +579,7 @@ static void sp805_realize(DeviceState *dev, Error **errp)
         ppc_dcr_register(env, s->baseaddr + offset, s,
                          sp805_dcr_read, sp805_dcr_write);
     }
+    sp805_reset(dev);
 }
 
 /**
