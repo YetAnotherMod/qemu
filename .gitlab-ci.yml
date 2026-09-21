@@ -36,7 +36,7 @@ stages:
 
 qemu_deb11:
   stage: build
-  image: lrepo.module.ru/debian:11
+  image: lrepo.module.ru/debian:11.10
   before_script:
     # INFO: setup clean debian to use local repositories
     - echo "deb https://lrepo.module.ru/repository/debian bullseye main contrib non-free" > /etc/apt/sources.list
@@ -55,7 +55,7 @@ qemu_deb11:
 
 qemu_mko_spacewire_deb11:
   stage: build
-  image: lrepo.module.ru/debian:11
+  image: lrepo.module.ru/debian:11.10
   before_script:
     # INFO: setup clean debian to use local repositories
     - echo "deb https://lrepo.module.ru/repository/debian bullseye main contrib non-free" > /etc/apt/sources.list
