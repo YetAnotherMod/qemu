@@ -496,7 +496,6 @@ static void oi10_o32t_realize(DeviceState *dev, Error **errp)
     {
         dcr_unknown4k(env, addr);
     }
-    dcr_unknown64k(env, 0x800b0000);
     //////////// 0x800B0000 - 0x800BFFFF - область WDT
     /// 0x800B0000 - 0x800B0FFF - регистровый файл WDT. Остальные 60КБ не используется
     for (uint32_t addr = (WDT_BASE_ADDR + 0x1000); addr < 0x800C0000; addr += 0x1000)
