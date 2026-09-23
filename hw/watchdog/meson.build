@@ -8,3 +8,5 @@ system_ss.add(when: 'CONFIG_ASPEED_SOC', if_true: files('wdt_aspeed.c'))
 system_ss.add(when: 'CONFIG_WDT_IMX2', if_true: files('wdt_imx2.c'))
 system_ss.add(when: 'CONFIG_WDT_SBSA', if_true: files('sbsa_gwdt.c'))
 specific_ss.add(when: 'CONFIG_PSERIES', if_true: files('spapr_watchdog.c'))
+
+specific_ss.add(when: 'CONFIG_WDT_SP805', if_true: files('wdt_sp805.c'))

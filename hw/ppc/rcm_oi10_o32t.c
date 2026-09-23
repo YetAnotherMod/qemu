@@ -17,6 +17,7 @@
 #include "hw/misc/commport.h"
 #include "hw/ssi/pl022.h"
 #include "hw/timer/double_timer.h"
+#include "hw/watchdog/wdt_sp805.h"
 
 #ifdef CONFIG_VIRTSW
 #include "hw/misc/rcm_spacewire.h"
@@ -61,6 +62,7 @@ struct Oi10O32tState {
     MpicState mpic;
     PLB6DMAState plb6dma;
     DoubleTimerState dit;
+    SP805State wdt;
 
     /* PLB6 bus */
     MemoryRegion *EMI;

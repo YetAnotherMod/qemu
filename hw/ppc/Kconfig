@@ -193,6 +193,7 @@ config OI10_O32T
     select COMMPORT
     select PLB6_DMA
     select DOUBLE_TIMER
+    select WDT_SP805
 
 config MT174
     bool
