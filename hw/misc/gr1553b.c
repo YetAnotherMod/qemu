@@ -43,6 +43,7 @@
 #define REG_RT_EVENT_LOG_IRQ_POS 0xb4
 
 #define IRQ_BCEV (1 << 0)
+#define IRQ_RTEV (1 << 8)
 
 #define BC_STAT_CFG_BCSUP (1 << 31)
 /* controller supports all bc features */
@@ -273,7 +274,7 @@ typedef union {
         uint32_t rxirq : 1;
         uint32_t rxlog : 1;
         uint32_t rxen : 1;
-        uint32_t bcrxe : 1;
+        uint32_t bcrxen : 1;
         uint32_t igndv : 1;
         uint32_t wrap : 1;
         uint32_t : 13;
@@ -287,6 +288,71 @@ typedef struct {
     uint32_t rx_addr;
     uint32_t _;
 } rt_subaddr_entry_t;
+
+typedef union {
+    struct {
+        uint32_t tres : 3;
+        uint32_t sz : 6;
+        uint32_t bc : 1;
+        uint32_t timel : 14;
+        uint32_t samc : 5;
+        uint32_t type : 2;
+        uint32_t irqsr : 1;
+    };
+    uint32_t val;
+} rt_event_log_t;
+
+typedef union {
+    struct {
+        uint32_t s : 2;
+        uint32_t sb : 2;
+        uint32_t sd : 2;
+        uint32_t sdb : 2;
+        uint32_t ts : 2;
+        uint32_t tsb : 2;
+        uint32_t tvw : 2;
+        uint32_t tbw : 2;
+        uint32_t dbc : 2;
+        uint32_t ist : 2;
+        uint32_t istb : 2;
+        uint32_t itf : 2;
+        uint32_t itfb : 2;
+        uint32_t rrt : 2;
+        uint32_t rrtb : 2;
+        uint32_t _ : 2;
+    };
+    uint32_t val;
+} rt_mode_code_ctrl_reg_t;
+
+typedef union {
+    struct {
+        uint32_t tflg : 1;
+        uint32_t dbca : 1;
+        uint32_t ssf : 1;
+        uint32_t busy : 1;
+        uint32_t sreq : 1;
+        uint32_t _ : 3;
+        uint32_t tfde : 1;
+        uint32_t __ : 23;
+    };
+    uint32_t val;
+} rt_bus_status_reg_t;
+
+typedef union {
+    struct {
+        uint16_t vector_word;
+        uint16_t bit_word;
+    };
+    uint32_t val;
+} rt_status_words_reg_t;
+
+typedef union {
+    struct {
+        uint16_t sync_data;
+        uint16_t sync_time;
+    };
+    uint32_t val;
+} rt_sync_reg_t;
 
 static int read_rt_subaddr_entry(AddressSpace *as, dma_addr_t addr,
                                  rt_subaddr_entry_t *ent)
@@ -838,20 +904,26 @@ enum {
     RT_TRES_LOOPBACK_FAIL,
 };
 
-static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
+typedef enum {
+    RT_RES_NO_LOG_NO_INT,
+    RT_RES_YES_LOG_NO_INT,
+    RT_RES_YES_LOG_YES_INT,
+} rt_res_t;
+
+static rt_res_t rt_handle_data_msg(GR1553BState *s, vmko_msg *msg,
+                                   bool is_broadcast, uint32_t *transfer_size)
 {
-    if (msg->format > 2) {
-        g_assert_not_reached();
+    vmko_word mko_word = {.word = msg->word};
+
+    if (!s->rt_format3_or_8_is_active &&
+        (msg->format == 3 || msg->format == 8)) {
+        mko_word.word = msg->rt2.word;
     }
 
-    if (msg->addr != s->rt_addr) {
-        return;
-    }
+    uint32_t entry_addr = s->reg_rt_subaddr_base_addr +
+                          mko_word.subaddr * sizeof(rt_subaddr_entry_t);
 
     rt_subaddr_entry_t entry;
-    uint32_t entry_addr =
-        s->reg_rt_subaddr_base_addr + msg->subaddr * sizeof(rt_subaddr_entry_t);
-
     if (read_rt_subaddr_entry(s->addr_space, entry_addr, &entry)) {
         /* FIXME: generate irq and then what?*/
         g_assert_not_reached();
@@ -860,33 +932,26 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
     /* this bits are not supported yet */
     assert(entry.word.txsz == 0);
     assert(entry.word.rxsz == 0);
-    assert(entry.word.txirq == 0);
-    assert(entry.word.rxirq == 0);
-    assert(entry.word.txlog == 0);
-    assert(entry.word.rxlog == 0);
-    assert(entry.word.bcrxe == 0);
     assert(entry.word.wrap == 0);
 
-    uint32_t desc_addr;
-    switch (msg->format) {
-    case 1:
-        if (!entry.word.rxen || entry.rx_addr == RT_INVALID_POINTER) {
-            /* TODO: add response that means "no response" */
-            return;
-        }
-        desc_addr = entry.rx_addr;
-        break;
-
-    case 2:
+    uint32_t desc_addr = 0;
+    if (mko_word.transmit) {
         if (!entry.word.txen || entry.tx_addr == RT_INVALID_POINTER) {
             /* TODO: add response that means "no response" */
-            return;
+            return RT_RES_NO_LOG_NO_INT;
         }
         desc_addr = entry.tx_addr;
-        break;
+    } else {
+        if (is_broadcast && !entry.word.bcrxen) {
+            /* TODO: add response that means "no response" */
+            return RT_RES_NO_LOG_NO_INT;
+        }
 
-    default:
-        g_assert_not_reached();
+        if (!entry.word.rxen || entry.rx_addr == RT_INVALID_POINTER) {
+            /* TODO: add response that means "no response" */
+            return RT_RES_NO_LOG_NO_INT;
+        }
+        desc_addr = entry.rx_addr;
     }
 
     rt_desc_t desc;
@@ -895,66 +960,369 @@ static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
         g_assert_not_reached();
     }
 
-    uint32_t size = (msg->nwords ? msg->nwords : MKO_MAX_WORDS) * sizeof(uint16_t);
+    vmko_msg reply;
 
-    switch (msg->format) {
-    case 1:
+    /* this bits are not supported yet */
+    assert(desc.word.irqen == 0);
+
+    uint32_t real_nwords = mko_word.nwords ? mko_word.nwords : MKO_MAX_WORDS;
+    if (!mko_word.transmit) {
         if (desc.word.dv && !entry.word.igndv) {
             /* TODO: add response that means "no response" */
-            return;
+            return RT_RES_NO_LOG_NO_INT;
         }
 
         /* write data */
-        if (dma_memory_write(s->addr_space, desc.data_addr, msg->data, size,
-                             MEMTXATTRS_UNSPECIFIED)) {
+        if (copy_half_words(s->addr_space, desc.data_addr, msg->data,
+                            real_nwords, DMA_DIRECTION_TO_DEVICE)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
 
         /* update subaddress entry pointer */
-        if (write_u32(s->addr_space, entry_addr + offsetof(rt_subaddr_entry_t, rx_addr),
-                      desc.next_desc)) {
+        size_t offset = offsetof(rt_subaddr_entry_t, rx_addr);
+        if (write_u32(s->addr_space, entry_addr + offset, desc.next_desc)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
-
-        desc.word.tres = RT_TRES_SUCCESS;
-        desc.word.sz = msg->nwords;
-        desc.word.dv = 1;
-
-        if (write_u32(s->addr_space, desc_addr, desc.word.val)) {
-            /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
-            g_assert_not_reached();
-        }
-        break;
-
-    case 2:
+    } else {
         /* read data */
-        if (dma_memory_read(s->addr_space, desc.data_addr, msg->data, size,
-                            MEMTXATTRS_UNSPECIFIED)) {
+        if (copy_half_words(s->addr_space, desc.data_addr, reply.data,
+                            real_nwords, DMA_DIRECTION_FROM_DEVICE)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
 
         /* update subaddress entry pointer */
-        if (write_u32(s->addr_space, entry_addr + offsetof(rt_subaddr_entry_t, tx_addr),
-                      desc.next_desc)) {
+        size_t offset = offsetof(rt_subaddr_entry_t, tx_addr);
+        if (write_u32(s->addr_space, entry_addr + offset, desc.next_desc)) {
             /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
             g_assert_not_reached();
         }
-
-        desc.word.tres = RT_TRES_SUCCESS;
-        desc.word.sz = msg->nwords;
-        desc.word.dv = 1;
-
-        if (write_u32(s->addr_space, desc_addr, desc.word.val)) {
-            /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
-            g_assert_not_reached();
-        }
-        break;
     }
 
-    vmko_logic_send(s->vmko_logic, msg);
+    desc.word.tres = RT_TRES_SUCCESS;
+    desc.word.sz = real_nwords;
+    desc.word.dv = 1;
+
+    if (write_u32(s->addr_space, desc_addr, desc.word.val)) {
+        /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
+        g_assert_not_reached();
+    }
+
+    rt_res_t res = RT_RES_NO_LOG_NO_INT;
+    if (mko_word.transmit) {
+        if (entry.word.txlog) {
+            res = entry.word.txirq ? RT_RES_YES_LOG_YES_INT
+                                   : RT_RES_YES_LOG_NO_INT;
+        }
+    } else {
+        if (entry.word.rxlog) {
+            res = entry.word.rxirq ? RT_RES_YES_LOG_YES_INT
+                                   : RT_RES_YES_LOG_NO_INT;
+        }
+    }
+
+    *transfer_size = real_nwords;
+
+    /* don't respond on any broadcast except format 8 transmit */
+    if (is_broadcast) {
+        if (msg->format != 8 || !mko_word.transmit) {
+            return res;
+        }
+    }
+
+    rt_bus_status_reg_t reg = {.val = s->reg_rt_bus_status};
+
+    reply.format = msg->format;
+    reply.line = msg->line;
+
+    if (mko_word.transmit && (msg->format == 3 || msg->format == 8)) {
+        reply.word = msg->word;
+
+        reply.rt2.word = 0;
+        reply.rt2.addr = mko_word.addr;
+        reply.rt2.rt_fault = reg.tflg;
+        reply.rt2.control_accept = reg.dbca;
+        reply.rt2.sub_fault = reg.ssf;
+        reply.rt2.busy = reg.busy;
+        reply.rt2.request = reg.sreq;
+        reply.rt2.group = 0;
+
+        reply.word_type = WORD_TYPE_RESP;
+    } else {
+        reply.word = 0;
+        reply.addr = mko_word.addr;
+        reply.rt_fault = reg.tflg;
+        reply.control_accept = reg.dbca;
+        reply.sub_fault = reg.ssf;
+        reply.busy = reg.busy;
+        reply.request = reg.sreq;
+        reply.group = is_broadcast;
+
+        reply.word_type =
+            msg->format == 3 ? WORD_TYPE_RESP_RESP : WORD_TYPE_RESP;
+    }
+
+    vmko_logic_send(s->vmko_logic, &reply);
+    return res;
+}
+
+typedef enum {
+    MKO_CMD_DYNAMIC_BUS_CONTROL = 0,
+    MKO_CMD_SYNCHRONIZE = 1,
+    MKO_CMD_TRANSMIT_STATUS_WORD = 2,
+    MKO_CMD_INITIATE_SELF_TEST = 3,
+    MKO_CMD_TRANSMIT_SHUTDOWN = 4,
+    MKO_CMD_OVERRIDE_TRANSMITTER_SHUTDOWN = 5,
+    MKO_CMD_INHIBIT_TERMINAL_FLAG = 6,
+    MKO_CMD_OVERRIDE_INHIBIT_TERMINAL_FLAG = 7,
+    MKO_CMD_RESET_REMOTE_TERMINAL = 8,
+    MKO_CMD_TRANSMIT_VECTOR_WORD = 16,
+    MKO_CMD_SYNCHRONIZE_WITH_DATA = 17,
+    MKO_CMD_TRANSMIT_LAST_COMMAND_WORD = 18,
+    MKO_CMD_TRANSMIT_BIT_WORD = 19,
+    MKO_CMD_SELECTED_TRANSMITTER_SHUTDOWN = 20,
+    MKO_CMD_OVERRIDE_SELECTED_TRANSMITTER_SHUTDOWN = 21,
+} mko_mode_code_t;
+
+static inline int rt_is_cmd_enabled(GR1553BState *s, mko_mode_code_t code,
+                                    uint16_t broadcast)
+{
+    rt_mode_code_ctrl_reg_t reg = {.val = s->reg_rt_mode_code_ctrl};
+    switch (code) {
+    case MKO_CMD_DYNAMIC_BUS_CONTROL:
+        return reg.dbc;
+
+    case MKO_CMD_SYNCHRONIZE:
+        return broadcast ? reg.sb : reg.s;
+
+    case MKO_CMD_TRANSMIT_STATUS_WORD:
+        return 1;
+
+    case MKO_CMD_INITIATE_SELF_TEST:
+        return broadcast ? reg.istb : reg.ist;
+
+    case MKO_CMD_TRANSMIT_SHUTDOWN:
+    case MKO_CMD_OVERRIDE_TRANSMITTER_SHUTDOWN:
+        return broadcast ? reg.tsb : reg.ts;
+
+    case MKO_CMD_INHIBIT_TERMINAL_FLAG:
+    case MKO_CMD_OVERRIDE_INHIBIT_TERMINAL_FLAG:
+        return broadcast ? reg.itfb : reg.itf;
+
+    case MKO_CMD_RESET_REMOTE_TERMINAL:
+        return broadcast ? reg.rrtb : reg.rrt;
+
+    case MKO_CMD_TRANSMIT_VECTOR_WORD:
+        return reg.tvw;
+
+    case MKO_CMD_SYNCHRONIZE_WITH_DATA:
+        return broadcast ? reg.sdb : reg.sd;
+
+    case MKO_CMD_TRANSMIT_LAST_COMMAND_WORD:
+        return 1;
+
+    case MKO_CMD_TRANSMIT_BIT_WORD:
+        return reg.tbw;
+
+    case MKO_CMD_SELECTED_TRANSMITTER_SHUTDOWN:
+    case MKO_CMD_OVERRIDE_SELECTED_TRANSMITTER_SHUTDOWN:
+        return 1;
+
+    default:
+        g_assert_not_reached();
+    }
+}
+
+static rt_res_t rt_handle_cmd_msg(GR1553BState *s, vmko_msg *msg,
+                                  bool is_broadcast, uint32_t *transfer_size)
+{
+    rt_res_t res;
+    switch (rt_is_cmd_enabled(s, msg->command, is_broadcast)) {
+    case 0:
+        return RT_RES_NO_LOG_NO_INT;
+    case 1:
+        res = RT_RES_NO_LOG_NO_INT;
+        break;
+    case 2:
+        res = RT_RES_YES_LOG_NO_INT;
+        break;
+    case 3:
+        res = RT_RES_YES_LOG_YES_INT;
+        break;
+    default:
+        g_assert_not_reached();
+    }
+
+    vmko_msg reply;
+    reply.word = 0;
+
+    if (msg->format == 5) {
+        rt_status_words_reg_t reg = {.val = s->reg_rt_status_words};
+
+        switch (msg->command) {
+        case MKO_CMD_TRANSMIT_VECTOR_WORD:
+            reply.data[0] = reg.vector_word;
+            break;
+
+        case MKO_CMD_TRANSMIT_LAST_COMMAND_WORD:
+            reply.data[0] = s->rt_last_command_code;
+            break;
+
+        case MKO_CMD_TRANSMIT_BIT_WORD:
+            reply.data[0] = reg.bit_word;
+            break;
+
+        default:
+            g_assert_not_reached();
+        }
+
+        *transfer_size = 1;
+    } else if (msg->format == 6 || msg->format == 10) {
+        rt_sync_reg_t reg = {.sync_data = msg->data[0], .sync_time = 0};
+
+        switch (msg->command) {
+        case MKO_CMD_SYNCHRONIZE_WITH_DATA:
+            // TODO: need to add sync_time
+            s->reg_rt_sync = reg.val;
+            break;
+
+        case MKO_CMD_SELECTED_TRANSMITTER_SHUTDOWN:
+        case MKO_CMD_OVERRIDE_SELECTED_TRANSMITTER_SHUTDOWN:
+            reply.msg_error = 1;
+            break;
+
+        default:
+            g_assert_not_reached();
+        }
+
+        *transfer_size = 1;
+    }
+
+    s->rt_last_command_code = msg->command;
+
+    if (is_broadcast) {
+        return res;
+    }
+
+    rt_bus_status_reg_t reg = {.val = s->reg_rt_bus_status};
+
+    reply.format = msg->format;
+    reply.word_type = WORD_TYPE_RESP;
+
+    reply.addr = msg->addr;
+
+    reply.rt_fault = reg.tflg;
+    reply.control_accept = reg.dbca;
+    reply.sub_fault = reg.ssf;
+    reply.busy = reg.busy;
+    reply.request = reg.sreq;
+    reply.group = is_broadcast;
+
+    vmko_logic_send(s->vmko_logic, &reply);
+    return res;
+}
+
+static void rt_handle_msg(GR1553BState *s, vmko_msg *msg)
+{
+    bool is_command = false;
+    bool is_broadcast = false;
+    bool transmit = msg->transmit;
+    uint16_t subaddr = msg->subaddr;
+
+    switch (msg->format) {
+    case 4:
+    case 5:
+    case 6:
+        is_command = true;
+        /* FALLTHROUGH */
+    case 1:
+    case 2:
+        if (msg->addr != s->rt_addr) {
+            /* ignore cmds for others addresses */
+            return;
+        }
+        break;
+
+    case 8:
+        is_broadcast = true;
+        /* FALLTHROUGH */
+    case 3:
+        if (msg->word_type == WORD_TYPE_CMD) {
+            s->rt_format3_or_8_is_active = false;
+
+            if (msg->rt2.addr == s->rt_addr) {
+                transmit = msg->rt2.transmit;
+                subaddr = msg->rt2.subaddr;
+                break;
+            }
+
+            if (msg->addr == s->rt_addr || is_broadcast) {
+                s->rt_format3_or_8_is_active = true;
+            }
+            return;
+        }
+
+        if (s->rt_format3_or_8_is_active && (msg->addr == s->rt_addr || is_broadcast)) {
+            break;
+        }
+
+        s->rt_format3_or_8_is_active = false;
+        return;
+
+    case 9:
+    case 10:
+        is_command = true;
+        /* FALLTHROUGH */
+    case 7:
+        is_broadcast = true;
+        break;
+
+    default:
+        g_assert_not_reached();
+    }
+
+    rt_res_t res;
+    uint32_t transfer_size = 0;
+    if (is_command) {
+        res = rt_handle_cmd_msg(s, msg, is_broadcast, &transfer_size);
+    } else {
+        res = rt_handle_data_msg(s, msg, is_broadcast, &transfer_size);
+    }
+
+    /* reset flag after any msg */
+    s->rt_format3_or_8_is_active = false;
+
+    if (res == RT_RES_NO_LOG_NO_INT) {
+        return;
+    }
+
+    rt_event_log_t log_entry = {
+        .irqsr = res == RT_RES_YES_LOG_YES_INT,
+        .type = is_command ? 2 : (transmit ? 0 : 1),
+        .samc = is_command ? msg->command : subaddr,
+        .sz = transfer_size,
+        .tres = 0,
+        .bc = is_broadcast,
+    };
+
+    if (write_u32(s->addr_space, s->reg_rt_event_log_pos, log_entry.val)) {
+        /* FIXME: qatomic_or(&s->reg_irq, IRQ_BCD); irq and then what?*/
+        g_assert_not_reached();
+    }
+
+    s->reg_rt_event_log_pos =
+        (s->reg_rt_event_log_pos & s->reg_rt_event_log_mask) |
+        ((s->reg_rt_event_log_pos + sizeof(uint32_t)) &
+         ~s->reg_rt_event_log_mask);
+
+    if (res == RT_RES_YES_LOG_NO_INT) {
+        return;
+    }
+
+    qatomic_or(&s->reg_irq, IRQ_RTEV);
+    gr1553b_update_irq(s);
 }
 
 static void bc_action_write(GR1553BState *s, uint32_t val)
@@ -1207,6 +1575,9 @@ static void gr1553b_reset(DeviceState *dev)
 
     s->rt_addr = RT_RESET_ADDR;
     s->rt_enabled = 0;
+    s->rt_last_command_code = 0x0;
+    s->rt_format3_or_8_is_active = false;
+
     s->reg_rt_bus_status = 0;
     s->reg_rt_subaddr_base_addr = 0;
     s->reg_rt_status_words = 0;

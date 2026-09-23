@@ -41,6 +41,8 @@ struct GR1553BState {
     uint32_t bc_tt_irq_ring_offset; /* access locked by `internal_mutex` */
     uint32_t rt_addr;
     uint32_t rt_enabled;
+    bool rt_format3_or_8_is_active;
+    uint16_t rt_last_command_code;
 
     QemuMutex bc_mutex;
     QemuThread bc_thread;
