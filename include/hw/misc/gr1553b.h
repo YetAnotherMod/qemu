@@ -28,6 +28,11 @@ struct GR1553BState {
 
     uint32_t reg_rt_bus_status;
     uint32_t reg_rt_subaddr_base_addr;
+    uint32_t reg_rt_status_words;
+    uint32_t reg_rt_sync;
+    uint32_t reg_rt_mode_code_ctrl;
+    uint32_t reg_rt_event_log_mask;
+    uint32_t reg_rt_event_log_pos;
 
     /* internal */
     QemuMutex internal_mutex;

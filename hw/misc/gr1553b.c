@@ -38,7 +38,7 @@
 #define REG_RT_SUBADDR_BASE_ADDR 0x94
 #define REG_RT_MODE_CODE_CTRL 0x98
 #define REG_RT_TIME_TAG_CTRL 0xa4
-#define REG_RT_EVENT_LOG_SIZE 0xac
+#define REG_RT_EVENT_LOG_MASK 0xac
 #define REG_RT_EVENT_LOG_POS 0xb0
 #define REG_RT_EVENT_LOG_IRQ_POS 0xb4
 
@@ -79,6 +79,8 @@
 #define RT_CONFIG_RTEN (1 << 0)
 
 #define RT_SUBADDR_BASE_ADDR_MASK 0xfffffe00
+#define RT_MODE_CODE_CTRL_MASK 0x3fffffff
+#define RT_LOG_MASK_MASK 0x1fff4
 
 #define RT_INVALID_POINTER 0x3
 #define RT_RESET_ADDR 0x1f
@@ -1058,8 +1060,11 @@ static uint64_t gr1553b_read(void *opaque, hwaddr offset, unsigned size)
         break;
 
     case REG_RT_STATUS_WORDS:
+        val = s->reg_rt_status_words;
+        break;
+
     case REG_RT_SYNC:
-        g_assert_not_reached();
+        val = s->reg_rt_sync;
         break;
 
     case REG_RT_SUBADDR_BASE_ADDR:
@@ -1067,9 +1072,18 @@ static uint64_t gr1553b_read(void *opaque, hwaddr offset, unsigned size)
         break;
 
     case REG_RT_MODE_CODE_CTRL:
-    case REG_RT_TIME_TAG_CTRL:
-    case REG_RT_EVENT_LOG_SIZE:
+        val = s->reg_rt_mode_code_ctrl;
+        break;
+
+    case REG_RT_EVENT_LOG_MASK:
+        val = s->reg_rt_event_log_mask;
+        break;
+
     case REG_RT_EVENT_LOG_POS:
+        val = s->reg_rt_event_log_pos;
+        break;
+
+    case REG_RT_TIME_TAG_CTRL:
     case REG_RT_EVENT_LOG_IRQ_POS:
         g_assert_not_reached();
         break;
@@ -1140,6 +1154,9 @@ static void gr1553b_write(void *opaque, hwaddr offset, uint64_t val, unsigned si
         break;
 
     case REG_RT_STATUS_WORDS:
+        s->reg_rt_status_words = val;
+        break;
+
     case REG_RT_SYNC:
         g_assert_not_reached();
         break;
@@ -1149,9 +1166,18 @@ static void gr1553b_write(void *opaque, hwaddr offset, uint64_t val, unsigned si
         break;
 
     case REG_RT_MODE_CODE_CTRL:
-    case REG_RT_TIME_TAG_CTRL:
-    case REG_RT_EVENT_LOG_SIZE:
+        s->reg_rt_mode_code_ctrl = val & RT_MODE_CODE_CTRL_MASK;
+        break;
+
+    case REG_RT_EVENT_LOG_MASK:
+        s->reg_rt_event_log_mask = (val & RT_LOG_MASK_MASK) | 0xFFE0000;
+        break;
+
     case REG_RT_EVENT_LOG_POS:
+        s->reg_rt_event_log_pos = val;
+        break;
+
+    case REG_RT_TIME_TAG_CTRL:
     case REG_RT_EVENT_LOG_IRQ_POS:
         g_assert_not_reached();
         break;
@@ -1183,6 +1209,10 @@ static void gr1553b_reset(DeviceState *dev)
     s->rt_enabled = 0;
     s->reg_rt_bus_status = 0;
     s->reg_rt_subaddr_base_addr = 0;
+    s->reg_rt_status_words = 0;
+    s->reg_rt_mode_code_ctrl = 0x155;
+    s->reg_rt_event_log_mask = 0xFFFFFFC;
+    s->reg_rt_event_log_pos = 0;
 
     gr1553b_update_irq(s);
 }
