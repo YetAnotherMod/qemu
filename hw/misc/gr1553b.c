@@ -1025,13 +1025,6 @@ static rt_res_t rt_handle_data_msg(GR1553BState *s, vmko_msg *msg,
 
     *transfer_size = real_nwords;
 
-    /* don't respond on any broadcast except format 8 transmit */
-    if (is_broadcast) {
-        if (msg->format != 8 || !mko_word.transmit) {
-            return res;
-        }
-    }
-
     rt_bus_status_reg_t reg = {.val = s->reg_rt_bus_status};
 
     reply.format = msg->format;
@@ -1050,6 +1043,8 @@ static rt_res_t rt_handle_data_msg(GR1553BState *s, vmko_msg *msg,
         reply.rt2.group = 0;
 
         reply.word_type = WORD_TYPE_RESP;
+
+        s->rt_last_response = reply.rt2.word;
     } else {
         reply.word = 0;
         reply.addr = mko_word.addr;
@@ -1062,6 +1057,15 @@ static rt_res_t rt_handle_data_msg(GR1553BState *s, vmko_msg *msg,
 
         reply.word_type =
             msg->format == 3 ? WORD_TYPE_RESP_RESP : WORD_TYPE_RESP;
+
+        s->rt_last_response = reply.word;
+    }
+
+    /* don't respond on any broadcast except format 8 transmit */
+    if (is_broadcast) {
+        if (msg->format != 8 || !mko_word.transmit) {
+            return res;
+        }
     }
 
     vmko_logic_send(s->vmko_logic, &reply);
@@ -1202,23 +1206,30 @@ static rt_res_t rt_handle_cmd_msg(GR1553BState *s, vmko_msg *msg,
 
     s->rt_last_command_code = msg->command;
 
-    if (is_broadcast) {
-        return res;
-    }
-
     rt_bus_status_reg_t reg = {.val = s->reg_rt_bus_status};
 
     reply.format = msg->format;
     reply.word_type = WORD_TYPE_RESP;
 
+    if (msg->command == MKO_CMD_TRANSMIT_STATUS_WORD ||
+        msg->command == MKO_CMD_TRANSMIT_LAST_COMMAND_WORD) {
+        reply.word = s->rt_last_response;
+    } else {
+        reply.rt_fault = reg.tflg;
+        reply.control_accept = reg.dbca;
+        reply.sub_fault = reg.ssf;
+        reply.busy = reg.busy;
+        reply.request = reg.sreq;
+        reply.group = is_broadcast;
+
+        s->rt_last_response = reply.word;
+    }
+
     reply.addr = msg->addr;
 
-    reply.rt_fault = reg.tflg;
-    reply.control_accept = reg.dbca;
-    reply.sub_fault = reg.ssf;
-    reply.busy = reg.busy;
-    reply.request = reg.sreq;
-    reply.group = is_broadcast;
+    if (is_broadcast) {
+        return res;
+    }
 
     vmko_logic_send(s->vmko_logic, &reply);
     return res;
@@ -1577,6 +1588,7 @@ static void gr1553b_reset(DeviceState *dev)
     s->rt_enabled = 0;
     s->rt_last_command_code = 0x0;
     s->rt_format3_or_8_is_active = false;
+    s->rt_last_response = 0x0;
 
     s->reg_rt_bus_status = 0;
     s->reg_rt_subaddr_base_addr = 0;

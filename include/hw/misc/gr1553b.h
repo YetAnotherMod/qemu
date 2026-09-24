@@ -43,6 +43,7 @@ struct GR1553BState {
     uint32_t rt_enabled;
     bool rt_format3_or_8_is_active;
     uint16_t rt_last_command_code;
+    uint16_t rt_last_response;
 
     QemuMutex bc_mutex;
     QemuThread bc_thread;
